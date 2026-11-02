@@ -45,7 +45,8 @@ one is needed.
 
 ### Spikes on the homelab cluster
 
-Run these by hand with plain manifests, before M2.
+Run these by hand before M2. The manifests and steps are in
+[spikes/](../spikes/README.md).
 
 1. **Clone from snapshot.** Snapshot a 20 GiB Synology PVC, create a PVC
    with `dataSource` pointing to it, and time how long it takes until a pod

@@ -1,0 +1,75 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotContent
+metadata:
+  name: spike-import
+spec:
+  deletionPolicy: Retain
+  driver: csi.san.synology.com
+  sourceVolumeMode: Filesystem
+  source:
+    snapshotHandle: ${SNAPSHOT_HANDLE}
+  volumeSnapshotRef:
+    name: spike-import
+    namespace: pbs-spike-tool
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: spike-import
+  namespace: pbs-spike-tool
+spec:
+  source:
+    volumeSnapshotContentName: spike-import
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spike-import-clone
+  namespace: pbs-spike-tool
+spec:
+  storageClassName: synology-iscsi
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: spike-import
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spike-import-reader
+  namespace: pbs-spike-tool
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsUser: 0
+  containers:
+    - name: reader
+      image: busybox:1.37
+      command:
+        - sh
+        - -c
+        - |
+          ls /data/small | wc -l
+          stat -c '%i %n' /data/big /data/small/f0
+          md5sum /data/big
+          tail -n 1 /data/live.log
+          sleep 3600
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+          add: [DAC_OVERRIDE]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+          readOnly: true
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: spike-import-clone
+        readOnly: true

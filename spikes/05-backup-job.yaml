@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spike-backup-${RUN}
+  namespace: pbs-spike
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: fetch
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              wget -O /tools/client.deb http://download.proxmox.com/debian/pbs-client/dists/trixie/main/binary-amd64/proxmox-backup-client-static_4.2.8-1_amd64.deb
+              echo "f20e5dd1565362f2c9bbfa892e4bda04e5e7a8fd9a14ef7c681ca716ac7c4001  /tools/client.deb" | sha256sum -c
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+        - name: unpack
+          image: debian:trixie-slim
+          command: [dpkg-deb, -x, /tools/client.deb, /tools/root]
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: backup
+          image: debian:trixie-slim
+          command:
+            - /tools/root/usr/bin/proxmox-backup-client
+            - backup
+            - volume.pxar:/data
+            - --ns
+            - $(PBS_NS)
+            - --backup-type
+            - host
+            - --backup-id
+            - pbs-spike.spike-source
+            - --change-detection-mode
+            - metadata
+          envFrom:
+            - configMapRef:
+                name: spike-pbs
+          env:
+            - name: PBS_PASSWORD_FILE
+              value: /secret/password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [DAC_OVERRIDE]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              readOnly: true
+            - name: tools
+              mountPath: /tools
+              readOnly: true
+            - name: secret
+              mountPath: /secret
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: spike-clone-${RUN}
+            readOnly: true
+        - name: tools
+          emptyDir: {}
+        - name: secret
+          secret:
+            secretName: spike-pbs-token

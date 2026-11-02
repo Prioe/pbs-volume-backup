@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spike-pbs
+  namespace: pbs-spike
+data:
+  PBS_REPOSITORY: "backup@pbs!k8s-spike@pbs.example:datastore"
+  PBS_FINGERPRINT: "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
+  PBS_NS: "spike"

@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spike-source
+  namespace: pbs-spike
+spec:
+  storageClassName: synology-iscsi
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spike-writer
+  namespace: pbs-spike
+  labels:
+    app: spike-writer
+spec:
+  containers:
+    - name: writer
+      image: busybox:1.37
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          if [ ! -f /data/.seeded ]; then
+            mkdir -p /data/small
+            i=0
+            while [ $i -lt 10000 ]; do
+              head -c 4096 /dev/urandom > /data/small/f$i
+              i=$((i+1))
+            done
+            chown -R 1000:1000 /data/small
+            chmod -R go-rwx /data/small
+            dd if=/dev/urandom of=/data/big bs=1M count=4096
+            touch /data/.seeded
+          fi
+          while true; do date >> /data/live.log; sleep 1; done
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: spike-source

@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spike-clone-${RUN}
+  namespace: pbs-spike
+spec:
+  storageClassName: synology-iscsi
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: spike-snap-${RUN}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spike-reader-${RUN}
+  namespace: pbs-spike
+spec:
+  restartPolicy: Never
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app: spike-writer
+  securityContext:
+    runAsUser: 0
+  containers:
+    - name: reader
+      image: busybox:1.37
+      command:
+        - sh
+        - -c
+        - |
+          ls /data/small | wc -l
+          stat -c '%i %n' /data/big /data/small/f0
+          md5sum /data/big
+          tail -n 1 /data/live.log
+          sleep 3600
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+          add: [DAC_OVERRIDE]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+          readOnly: true
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: spike-clone-${RUN}
+        readOnly: true
