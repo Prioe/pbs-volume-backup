@@ -1,0 +1,151 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pbs-spike-agent
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: claude
+  namespace: pbs-spike-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pbs-spike-agent-namespaced
+rules:
+  - apiGroups: [""]
+    resources: [pods, persistentvolumeclaims, configmaps]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [get, list, watch, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pbs-spike-agent
+  namespace: pbs-spike
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pbs-spike-agent-namespaced
+subjects:
+  - kind: ServiceAccount
+    name: claude
+    namespace: pbs-spike-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pbs-spike-agent
+  namespace: pbs-spike-tool
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pbs-spike-agent-namespaced
+subjects:
+  - kind: ServiceAccount
+    name: claude
+    namespace: pbs-spike-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pbs-spike-agent-cluster
+rules:
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, watch, patch, delete]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshotcontents]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshotclasses]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pbs-spike-agent-cluster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pbs-spike-agent-cluster
+subjects:
+  - kind: ServiceAccount
+    name: claude
+    namespace: pbs-spike-agent
+---
+# RBAC can't scope cluster-wide objects to a namespace; this limits the
+# agent's PV and VolumeSnapshotContent writes to ones tied to pbs-spike*.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: pbs-spike-agent-scope
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [UPDATE, DELETE]
+        resources: [persistentvolumes]
+      - apiGroups: [snapshot.storage.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [volumesnapshotcontents]
+  matchConditions:
+    - name: is-agent
+      expression: request.userInfo.username == 'system:serviceaccount:pbs-spike-agent:claude'
+  validations:
+    - expression: >-
+        request.resource.resource == 'persistentvolumes'
+        ? has(oldObject.spec.claimRef) && oldObject.spec.claimRef.namespace.startsWith('pbs-spike')
+        : (request.operation == 'CREATE' ? object : oldObject).spec.volumeSnapshotRef.namespace.startsWith('pbs-spike')
+      message: the spike agent may only change PVs and VolumeSnapshotContents of pbs-spike namespaces
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: pbs-spike-agent-scope
+spec:
+  policyName: pbs-spike-agent-scope
+  validationActions: [Deny]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: spike
+  namespace: pbs-spike
+spec:
+  hard:
+    requests.storage: 80Gi
+    persistentvolumeclaims: "4"
+    count/volumesnapshots.snapshot.storage.k8s.io: "4"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: spike
+  namespace: pbs-spike-tool
+spec:
+  hard:
+    requests.storage: 20Gi
+    persistentvolumeclaims: "1"
+    count/volumesnapshots.snapshot.storage.k8s.io: "1"

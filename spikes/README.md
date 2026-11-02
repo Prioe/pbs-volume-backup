@@ -20,11 +20,65 @@ Requirements:
 - Spike 5 only: a PBS namespace `spike` and an API token with
   `DatastoreBackup` on it.
 
+## Restricted account for an agent
+
+To let a coding agent run the spikes, give it its own account instead of an
+admin kubeconfig. `agent-access.yaml` creates the ServiceAccount
+`pbs-spike-agent/claude` with:
+
+- Pods, PVCs, ConfigMaps, Jobs, VolumeSnapshots, logs and exec, only in
+  `pbs-spike` and `pbs-spike-tool`. No Secrets. No namespaces.
+- Read access to StorageClasses and VolumeSnapshotClasses.
+- Patch and delete on PVs, and create and delete on VolumeSnapshotContents.
+  These objects are cluster-wide, so a ValidatingAdmissionPolicy (Kubernetes
+  1.30 or later) rejects the change unless the object belongs to a
+  `pbs-spike*` namespace.
+- A ResourceQuota on both namespaces, so the NAS can't fill up.
+
+Two risks remain. The agent can list all PVs and read their metadata. And
+with a VolumeSnapshotContent it can import any snapshot handle it knows into
+`pbs-spike-tool` and read that data.
+
+As an admin, create the namespaces, the account and a kubeconfig with a
+token that expires after 12 hours:
+
+```sh
+kubectl apply -f 00-namespaces.yaml -f agent-access.yaml
+KC=~/.kube/pbs-spike-agent.yaml
+kubectl config view --minify --raw \
+  -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > /tmp/spike-ca.crt
+KUBECONFIG=$KC kubectl config set-cluster spike --embed-certs \
+  --server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')" \
+  --certificate-authority=/tmp/spike-ca.crt
+KUBECONFIG=$KC kubectl config set-credentials claude \
+  --token="$(kubectl -n pbs-spike-agent create token claude --duration=12h)"
+KUBECONFIG=$KC kubectl config set-context spike --cluster=spike --user=claude --namespace=pbs-spike
+KUBECONFIG=$KC kubectl config use-context spike
+rm /tmp/spike-ca.crt
+```
+
+Steps the admin keeps:
+
+- Spike 5: create the token Secret and apply `05-pbs.local.yaml`.
+- Spike 2: look in DSM for LUNs and snapshots.
+- End: delete the namespaces with `kubectl delete -f agent-access.yaml -f
+  00-namespaces.yaml`, and clean up PBS.
+
+Check the account before the first spike. The second command patches a PV
+outside the spike namespaces with `--dry-run=server` and must fail with the
+policy's message:
+
+```sh
+KUBECONFIG=~/.kube/pbs-spike-agent.yaml kubectl auth can-i --list -n pbs-spike
+KUBECONFIG=~/.kube/pbs-spike-agent.yaml kubectl patch pv <any-other-pv> --dry-run=server \
+  -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+```
+
 ## Setup
 
 ```sh
 cd spikes
-kubectl apply -f 00-namespaces.yaml
+kubectl apply -f 00-namespaces.yaml  # skip with the agent account
 kubectl apply -f 01-source.yaml
 until kubectl -n pbs-spike exec spike-writer -- test -f /data/.seeded; do sleep 10; done
 ```
