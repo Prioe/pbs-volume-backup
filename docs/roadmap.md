@@ -34,7 +34,7 @@ one is needed.
      `create`, `get` and `delete` on VolumeSnapshotContents, and the Synology
      CSI driver must accept an imported handle (spike 4).
 
-   Recommendation: C if spike 4 passes, A otherwise.
+   Decided: C. Spike 4 passed; design.md describes the flow.
 
 2. **License.** Pick one before the first commit with code (for example
    Apache-2.0 or MIT).
@@ -46,7 +46,8 @@ one is needed.
 ### Spikes on the homelab cluster
 
 Run these by hand before M2. The manifests and steps are in
-[spikes/](../spikes/README.md).
+[spikes/](../spikes/README.md). All five ran on 2026-11-03; the results are
+in design.md.
 
 1. **Clone from snapshot.** Snapshot a 20 GiB Synology PVC, create a PVC
    with `dataSource` pointing to it, and time how long it takes until a pod

@@ -59,11 +59,22 @@ address, datastore and namespace come from Helm values.
    default. The backup pod must read files of any owner, so it runs as root
    with the read-only volume mount. `DAC_READ_SEARCH` is not allowed under
    baseline; `DAC_OVERRIDE` is, and it is in containerd's default capability
-   set. Drop all other capabilities.
-10. **Least privilege.** The driver's ServiceAccount may list PVCs and PVs,
-    and create, get and delete VolumeSnapshots, PVCs and Pods, and create
-    Events. It may not read Secrets outside its own namespace. See the open
-    question on how the backup pod gets the token in other namespaces.
+   set. Drop all other capabilities. The backup pod runs in the tool's own
+   namespace (see the flow below), so app namespaces may enforce a stricter
+   level.
+10. **Least privilege.** The driver's ServiceAccount may:
+    - list PVCs, and create, get and delete VolumeSnapshots, in all
+      namespaces;
+    - create, get and delete VolumeSnapshotContents;
+    - get, patch and delete PVs;
+    - create, get and delete PVCs, Pods and ConfigMaps, and get `pods/log`,
+      in its own namespace;
+    - create Events.
+
+    It reads no Secrets: the backup pod mounts the token Secret from the
+    tool's own namespace. RBAC can't limit PV and VolumeSnapshotContent
+    access to the tool's own objects; the driver only touches the ones it
+    created.
 
 ### Should
 
@@ -89,9 +100,9 @@ address, datastore and namespace come from Helm values.
 
 - **Go binary** with two subcommands:
   - `backup`: the driver. It lists PVCs, then for each one creates the
-    snapshot, waits until it is ready, creates the temporary PVC and a backup
-    pod in the PVC's namespace, waits for the pod, records the result and
-    cleans up.
+    snapshot, waits until it is ready, imports it into its own namespace,
+    creates the temporary PVC and a backup pod there, waits for the pod,
+    records the result and cleans up.
   - `restore`: see requirement 6.
   - The backup pod runs the same image with a small `run-client`
     subcommand (or a shell entrypoint) that calls `proxmox-backup-client`.
@@ -106,28 +117,65 @@ address, datastore and namespace come from Helm values.
 
 ### Flow per PVC
 
-1. Create a `VolumeSnapshot` of the PVC; wait for `readyToUse`.
-2. Create a PVC with `dataSource` set to the snapshot, the same storage class
-   and size. With `WaitForFirstConsumer` it binds when the pod starts.
-3. Start a pod that mounts that PVC read-only and runs
-   `proxmox-backup-client backup volume.pxar:/data pvc.conf:/meta/pvc.yaml
-   --ns <ns> --backup-type host --backup-id <namespace>.<pvc>
-   --change-detection-mode metadata`.
-4. Wait for the pod to finish; read its exit code and log.
-5. Delete pod, temporary PVC and snapshot. With the reclaim policy `Retain`
-   on the storage class, the temporary PV stays behind: the driver must
-   delete the PV (and through the CSI driver the volume) too. Verify this on
-   Synology.
+1. Create a `VolumeSnapshot` of the PVC in the PVC's namespace; wait for
+   `readyToUse`.
+2. Import the snapshot into the tool's namespace. A clone PVC must be in the
+   same namespace as its VolumeSnapshot, so the driver creates a
+   `VolumeSnapshotContent` with the same `snapshotHandle`,
+   `sourceVolumeMode: Filesystem` and `deletionPolicy: Retain`, and a
+   VolumeSnapshot in its own namespace bound to it. This copies no data.
+3. Create a PVC in the tool's namespace with `dataSource` set to the
+   imported snapshot, the same storage class, and the size from the
+   snapshot's `restoreSize`. With `WaitForFirstConsumer` it binds when the
+   pod starts.
+4. Write the PVC and its PV as YAML into a ConfigMap. Start a pod in the
+   tool's namespace that mounts the clone with `readOnly: true` in the pod
+   spec (not a `ReadOnlyMany` access mode: a crash-consistent ext4 may need
+   a journal replay when the volume is staged), the ConfigMap and the token
+   Secret. It runs `proxmox-backup-client backup volume.pxar:/data
+   pvc.conf:/meta/pvc.yaml --ns <ns> --backup-type host --backup-id
+   <namespace>.<pvc> --change-detection-mode metadata`.
+5. Wait for the pod to finish; read its exit code and log.
+6. Clean up:
+   - Delete the pod and the ConfigMap.
+   - Set the clone PV's `persistentVolumeReclaimPolicy` to `Delete`, then
+     delete the clone PVC. The PV and the volume on the storage go with it.
+     Deleting a `Retain` PV instead leaves the volume on the storage.
+   - Delete the imported VolumeSnapshot and its VolumeSnapshotContent. With
+     `Retain`, the snapshot on the storage stays.
+   - Delete the original VolumeSnapshot. The VolumeSnapshotClass must have
+     `deletionPolicy: Delete`, or every run leaves a snapshot on the
+     storage.
 
-### Things to verify early
+The backup pod needs no node affinity: the clone attaches to any node.
 
-- The Synology CSI driver can create a PVC from a `VolumeSnapshot`
-  (`dataSource`), and how long a clone of a 20 GiB LUN takes.
-- Where the backup pod must run: an iSCSI clone can attach to any node, so
-  there is no node affinity to the app. Check that this holds.
-- `--change-detection-mode metadata` needs the previous snapshot's metadata
-  index. Check that it works when the source path is a new clone each run
-  (inode numbers change, so the client may read everything again).
+### Spike results
+
+Measured on 2026-11-03 on the first user's cluster (Synology CSI, LUNs on
+Btrfs) with the manifests in [spikes/](../spikes/README.md):
+
+- A snapshot of a 20 GiB LUN is ready in 2 s. A clone from it is mounted
+  in a pod on another node within 9 to 17 s. Both are copy-on-write on the
+  NAS.
+- The clone mounts with `readOnly: true`. Root with only `DAC_OVERRIDE`
+  reads a directory owned by UID 1000 with mode 0700. Without the
+  capability it gets "Permission denied".
+- Importing the snapshot handle into another namespace works (the driver
+  supports `LIST_SNAPSHOTS`). The import is ready in 1 s. Deleting it leaves
+  the original snapshot on the NAS.
+- `--change-detection-mode metadata` works on a fresh clone each run. A
+  block-level clone keeps the inode numbers. The second run reused 4.04 GiB
+  (100%), uploaded 54 KiB and took 1 s, against 202 s for the first run.
+  The CSI hostpath driver in CI copies files instead, so it can't show this.
+- With reclaim policy `Retain`, deleting the PV left the LUN on the NAS.
+  Setting the PV to `Delete` first removed it. A VolumeSnapshotClass with
+  `deletionPolicy: Delete` removed the snapshots on the NAS.
+- Crash consistency: data that the app had appended but the kernel had not
+  yet written out shows up as NUL bytes at the end of the file in the clone.
+  Apps that call `fsync` (SQLite, Postgres) are not affected. The README
+  should say this.
+- `csi-snapshotter` older than v6 fails with snapshot-controller v8:
+  "sourceVolumeMode is required once set".
 
 ## Testing
 
@@ -148,17 +196,15 @@ address, datastore and namespace come from Helm values.
 
 ## Cluster prerequisites (done in the cluster's own repo)
 
-- VolumeSnapshot CRDs and the snapshot-controller.
-- A `VolumeSnapshotClass` for each CSI driver in use.
+- VolumeSnapshot CRDs and the snapshot-controller, and a `csi-snapshotter`
+  sidecar for each CSI driver at a version that matches the controller.
+- A `VolumeSnapshotClass` for each CSI driver in use, with
+  `deletionPolicy: Delete`.
 - On PBS: a namespace for the cluster, a prune job for it, and a user with an
   API token that has `DatastoreBackup` on that namespace only.
 - A Secret with the token, and a Flux `OCIRepository` plus `HelmRelease`.
 
 ## Open questions
 
-- How the backup pod gets the PBS token in the PVC's namespace. Options: the
-  driver copies the Secret into the namespace for the run and deletes it
-  afterwards (needs create/delete on Secrets there), or the driver streams
-  the token to the pod some other way. Decide before building.
 - License.
 - Which PBS container image to use in CI (Proxmox publishes none).
