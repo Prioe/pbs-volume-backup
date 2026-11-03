@@ -26,8 +26,11 @@ type Config struct {
 	SnapshotClasses map[string]string
 
 	SnapshotTimeout time.Duration
-	BackupTimeout   time.Duration
-	CleanupTimeout  time.Duration
+	// StartTimeout limits how long the backup pod may stay Pending, before
+	// BackupTimeout applies.
+	StartTimeout   time.Duration
+	BackupTimeout  time.Duration
+	CleanupTimeout time.Duration
 }
 
 // Validate reports missing or invalid settings.
@@ -51,6 +54,7 @@ func (c *Config) Validate() error {
 		value time.Duration
 	}{
 		{"snapshot timeout", c.SnapshotTimeout},
+		{"start timeout", c.StartTimeout},
 		{"backup timeout", c.BackupTimeout},
 		{"cleanup timeout", c.CleanupTimeout},
 	} {

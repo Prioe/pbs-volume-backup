@@ -52,6 +52,7 @@ func testConfig() Config {
 		SkipLabel:       "pbs-volume-backup/skip",
 		SkipValue:       "true",
 		SnapshotTimeout: time.Second,
+		StartTimeout:    time.Minute,
 		BackupTimeout:   time.Hour,
 		CleanupTimeout:  5 * time.Second,
 	}
@@ -398,6 +399,14 @@ func TestRunFailureCleansUp(t *testing.T) {
 			wantErr: "exit code 255",
 		},
 		{
+			name: "pod never starts",
+			setup: func(h *harness) {
+				h.podPhase = corev1.PodPending
+				h.d.cfg.StartTimeout = 20 * time.Millisecond
+			},
+			wantErr: "backup pod not started",
+		},
+		{
 			name:  "cancelled while pod runs",
 			setup: func(h *harness) { h.podPhase = corev1.PodPending },
 			ctx: func(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -432,6 +441,27 @@ func TestRunFailureCleansUp(t *testing.T) {
 				t.Errorf("events = %+v", evs)
 			}
 		})
+	}
+}
+
+func TestCancelSkipsRemainingWithoutEvents(t *testing.T) {
+	first, firstPV := boundPVC("app", "a", nil)
+	second, secondPV := boundPVC("app", "b", nil)
+	h := newHarness(t, testConfig(), first, firstPV, second, secondPV, defaultClass("default", csiDriver))
+	h.podPhase = corev1.PodPending
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	results, err := h.d.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[1].Status != StatusFailed || !strings.Contains(results[1].Err.Error(), "not attempted") {
+		t.Fatalf("results = %+v", results)
+	}
+	h.assertClean(t)
+	evs := h.failureEvents(t, "app")
+	if len(evs) != 1 || evs[0].InvolvedObject.Name != "a" {
+		t.Errorf("events = %+v", evs)
 	}
 }
 

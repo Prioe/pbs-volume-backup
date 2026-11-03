@@ -67,25 +67,29 @@ func (d *Driver) Run(ctx context.Context) ([]Result, error) {
 		return nil, err
 	}
 	for _, r := range results {
-		d.report(ctx, r, nil)
+		d.report(ctx, r, nil, true)
 	}
 	for _, t := range targets {
+		r := Result{Namespace: t.pvc.Namespace, Name: t.pvc.Name, Status: StatusFailed}
+		if err := ctx.Err(); err != nil {
+			r.Err = fmt.Errorf("not attempted: %w", err)
+			d.report(ctx, r, t.pvc, false)
+			results = append(results, r)
+			continue
+		}
 		start := time.Now()
-		err := ctx.Err()
-		if err == nil {
-			err = d.backupOne(ctx, t)
+		r.Err = d.backupOne(ctx, t)
+		r.Duration = time.Since(start)
+		if r.Err == nil {
+			r.Status = StatusOK
 		}
-		r := Result{Namespace: t.pvc.Namespace, Name: t.pvc.Name, Status: StatusOK, Duration: time.Since(start)}
-		if err != nil {
-			r.Status, r.Err = StatusFailed, err
-		}
-		d.report(ctx, r, t.pvc)
+		d.report(ctx, r, t.pvc, true)
 		results = append(results, r)
 	}
 	return results, nil
 }
 
-func (d *Driver) report(ctx context.Context, r Result, pvc *corev1.PersistentVolumeClaim) {
+func (d *Driver) report(ctx context.Context, r Result, pvc *corev1.PersistentVolumeClaim, event bool) {
 	attrs := []any{"pvc", r.Namespace + "/" + r.Name, "result", string(r.Status)}
 	if r.Duration > 0 {
 		attrs = append(attrs, "duration", r.Duration.Round(time.Millisecond).String())
@@ -96,7 +100,9 @@ func (d *Driver) report(ctx context.Context, r Result, pvc *corev1.PersistentVol
 	if r.Err != nil {
 		attrs = append(attrs, "error", r.Err.Error())
 		d.log.Error("volume", attrs...)
-		d.recordFailure(context.WithoutCancel(ctx), r, pvc)
+		if event {
+			d.recordFailure(context.WithoutCancel(ctx), r, pvc)
+		}
 		return
 	}
 	d.log.Info("volume", attrs...)
@@ -236,12 +242,17 @@ func (d *Driver) waitSnapshot(ctx context.Context, namespace, name string) (*sna
 func (d *Driver) waitPod(ctx context.Context, name string) error {
 	pods := d.kube.CoreV1().Pods(d.cfg.Namespace)
 	var pod *corev1.Pod
-	timeout := d.cfg.BackupTimeout + time.Minute
+	errNotStarted := errors.New("backup pod not started")
+	start := time.Now()
+	timeout := d.cfg.StartTimeout + d.cfg.BackupTimeout + time.Minute
 	err := wait.PollUntilContextTimeout(ctx, d.pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
 		var err error
 		pod, err = pods.Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
+		}
+		if pod.Status.Phase == corev1.PodPending && time.Since(start) > d.cfg.StartTimeout {
+			return false, fmt.Errorf("%w within %s", errNotStarted, d.cfg.StartTimeout)
 		}
 		return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed, nil
 	})
@@ -277,12 +288,17 @@ func podState(pod *corev1.Pod) string {
 	if pod.Status.Reason != "" {
 		parts = append(parts, "reason "+pod.Status.Reason)
 	}
+	for _, c := range pod.Status.Conditions {
+		if c.Status == corev1.ConditionFalse && c.Reason != "" {
+			parts = append(parts, fmt.Sprintf("%s: %s %s", c.Type, c.Reason, c.Message))
+		}
+	}
 	for _, cs := range pod.Status.ContainerStatuses {
 		switch {
 		case cs.State.Terminated != nil:
 			parts = append(parts, fmt.Sprintf("exit code %d", cs.State.Terminated.ExitCode))
 		case cs.State.Waiting != nil:
-			parts = append(parts, "waiting: "+cs.State.Waiting.Reason)
+			parts = append(parts, strings.TrimSpace("waiting: "+cs.State.Waiting.Reason+" "+cs.State.Waiting.Message))
 		}
 	}
 	return strings.Join(parts, ", ")

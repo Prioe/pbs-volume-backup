@@ -39,6 +39,7 @@ func backupFlags(args []string, stderr io.Writer) (backup.Config, bool, error) {
 	})
 	var envErrs []error
 	fs.DurationVar(&cfg.SnapshotTimeout, "snapshot-timeout", envDuration("PVB_SNAPSHOT_TIMEOUT", 10*time.Minute, &envErrs), "wait at most this long for a snapshot (env PVB_SNAPSHOT_TIMEOUT)")
+	fs.DurationVar(&cfg.StartTimeout, "start-timeout", envDuration("PVB_START_TIMEOUT", 15*time.Minute, &envErrs), "wait at most this long for the backup pod to start (env PVB_START_TIMEOUT)")
 	fs.DurationVar(&cfg.BackupTimeout, "backup-timeout", envDuration("PVB_BACKUP_TIMEOUT", 6*time.Hour, &envErrs), "maximum run time of one backup pod (env PVB_BACKUP_TIMEOUT)")
 	fs.DurationVar(&cfg.CleanupTimeout, "cleanup-timeout", envDuration("PVB_CLEANUP_TIMEOUT", 2*time.Minute, &envErrs), "maximum time for the cleanup of one volume (env PVB_CLEANUP_TIMEOUT)")
 	verbose := fs.Bool("v", false, "log the client output of each backup")
