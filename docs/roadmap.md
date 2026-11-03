@@ -36,8 +36,8 @@ one is needed.
 
    Decided: C. Spike 4 passed; design.md describes the flow.
 
-2. **License.** Pick one before the first commit with code (for example
-   Apache-2.0 or MIT).
+2. **License.** Decided: AGPL-3.0-or-later, the same as
+   `proxmox-backup-client`.
 
 3. **PBS in CI (open question).** Proxmox publishes no container image.
    Research the options (a community image, or one built from the Proxmox
@@ -78,7 +78,8 @@ section is empty, and each spike has a recorded result.
 ## M1: Skeleton
 
 - Go module, `cmd/pbs-volume-backup/` with the subcommands `backup`,
-  `restore` and `run-client` as stubs, `internal/` packages.
+  `restore` and `run-client` as stubs. `internal/` follows in M2, with the
+  first code that belongs there.
 - Dockerfile: the Go binary plus `proxmox-backup-client-static`, unpacked
   with `dpkg-deb`. Look up the current package version and its SHA-256 in
   the Proxmox apt repository and pin both. amd64 only.
