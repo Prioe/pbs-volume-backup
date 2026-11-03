@@ -206,5 +206,4 @@ Btrfs) with the manifests in [spikes/](../spikes/README.md):
 
 ## Open questions
 
-- License.
 - Which PBS container image to use in CI (Proxmox publishes none).
