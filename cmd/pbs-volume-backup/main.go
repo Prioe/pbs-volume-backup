@@ -3,10 +3,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -15,32 +18,37 @@ var version = "dev"
 const usage = `Usage: pbs-volume-backup <command> [flags]
 
 Commands:
-  backup      back up all selected PVCs
-  restore     restore a PBS snapshot into a PVC
-  run-client  run proxmox-backup-client inside a backup or restore pod
-  version     print the version
+  backup   back up all selected PVCs
+  restore  restore a PBS snapshot into a PVC
+  version  print the version
+
+Run "pbs-volume-backup <command> -h" for the flags of a command.
 `
 
 var errUsage = errors.New("invalid usage")
 
 func main() {
-	err := run(os.Args[1:], os.Stdout)
-	if errors.Is(err, errUsage) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	switch {
+	case errors.Is(err, errUsage):
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
-	}
-	if err != nil {
+	case err != nil:
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, stdout io.Writer) error {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errUsage
 	}
 	switch args[0] {
-	case "backup", "restore", "run-client":
+	case "backup":
+		return runBackup(ctx, args[1:], stdout, stderr)
+	case "restore":
 		return fmt.Errorf("%s: not implemented", args[0])
 	case "version":
 		_, err := fmt.Fprintln(stdout, version)

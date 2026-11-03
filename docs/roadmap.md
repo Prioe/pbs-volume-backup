@@ -77,8 +77,8 @@ section is empty, and each spike has a recorded result.
 
 ## M1: Skeleton
 
-- Go module, `cmd/pbs-volume-backup/` with the subcommands `backup`,
-  `restore` and `run-client` as stubs. `internal/` follows in M2, with the
+- Go module, `cmd/pbs-volume-backup/` with the subcommands `backup` and
+  `restore` as stubs. `internal/` follows in M2, with the
   first code that belongs there.
 - Dockerfile: the Go binary plus `proxmox-backup-client-static`, unpacked
   with `dpkg-deb`. Look up the current package version and its SHA-256 in
@@ -119,14 +119,9 @@ backs up one PVC end to end.
 
 Closes R5 and R7, and the Should items.
 
-- `run-client`: builds the `proxmox-backup-client backup` call with
-  `volume.pxar`, `pvc.conf`, `--ns`, `--backup-type host`, `--backup-id` and
-  `--change-detection-mode metadata`. Reads the token from
-  `PBS_PASSWORD_FILE`, the fingerprint from the environment.
-- Token delivery as decided in M0.
-- `pvc.conf`: the driver serializes the PVC and PV to YAML (status and
-  managed fields stripped) and hands it to the pod, for example in a
-  ConfigMap next to the pod.
+- Done early in M2: the client call, the token from the Secret in the
+  tool's namespace, and `pvc.conf` from a ConfigMap. `run-client` was
+  dropped: the pod calls `proxmox-backup-client` directly.
 - Extra client options passed through (for example `--crypt-mode` and a key
   file).
 - `--dry-run`: print the PVCs that would be backed up and the snapshot class

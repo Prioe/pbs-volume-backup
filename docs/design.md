@@ -63,12 +63,13 @@ address, datastore and namespace come from Helm values.
    namespace (see the flow below), so app namespaces may enforce a stricter
    level.
 10. **Least privilege.** The driver's ServiceAccount may:
-    - list PVCs, and create, get and delete VolumeSnapshots, in all
+    - list PVCs, and list, create, get and delete VolumeSnapshots, in all
       namespaces;
-    - create, get and delete VolumeSnapshotContents;
-    - get, patch and delete PVs;
-    - create, get and delete PVCs, Pods and ConfigMaps, and get `pods/log`,
-      in its own namespace;
+    - list, create, get and delete VolumeSnapshotContents;
+    - list VolumeSnapshotClasses;
+    - list, get, patch and delete PVs;
+    - list, create, get and delete PVCs, Pods and ConfigMaps, and get
+      `pods/log`, in its own namespace;
     - create Events.
 
     It reads no Secrets: the backup pod mounts the token Secret from the
@@ -104,8 +105,8 @@ address, datastore and namespace come from Helm values.
     creates the temporary PVC and a backup pod there, waits for the pod,
     records the result and cleans up.
   - `restore`: see requirement 6.
-  - The backup pod runs the same image with a small `run-client`
-    subcommand (or a shell entrypoint) that calls `proxmox-backup-client`.
+  - The backup pod runs the same image and calls `proxmox-backup-client`
+    directly. The image is distroless and has no shell.
   - Uses client-go. No kubectl in the image.
 - **Container image**: the Go binary plus the official
   `proxmox-backup-client-static` package from the Proxmox repository
@@ -148,6 +149,16 @@ address, datastore and namespace come from Helm values.
      storage.
 
 The backup pod needs no node affinity: the clone attaches to any node.
+
+The tool's namespace is reserved for the tool: PVCs in it are not backed up.
+Before the first PVC, each run deletes all objects with the managed-by label
+that a crashed run left behind, in the same order as above. It also sets
+released PVs of clones in its namespace to `Delete`; such a PV is left when
+a clone PVC is deleted while its volume is still being provisioned.
+
+A PVC that can't be backed up (no CSI volume, a block volume, or no
+VolumeSnapshotClass for its driver) counts as failed, not skipped. The
+error names the opt-out label.
 
 ### Spike results
 
