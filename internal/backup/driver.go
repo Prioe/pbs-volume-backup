@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
@@ -78,24 +79,50 @@ func (d *Driver) Run(ctx context.Context) ([]Result, error) {
 		}
 		return results, nil
 	}
-	for _, t := range targets {
-		r := Result{Namespace: t.pvc.Namespace, Name: t.pvc.Name, Status: StatusFailed}
-		if err := ctx.Err(); err != nil {
-			r.Err = fmt.Errorf("not attempted: %w", err)
-			d.report(ctx, r, t.pvc, false)
-			results = append(results, r)
+	return append(results, d.backupAll(ctx, targets)...), nil
+}
+
+// backupAll backs up the targets with at most Concurrency at a time and
+// returns their results in the order of targets.
+func (d *Driver) backupAll(ctx context.Context, targets []target) []Result {
+	results := make([]Result, len(targets))
+	sem := make(chan struct{}, max(1, d.cfg.Concurrency))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		if err := acquire(ctx, sem); err != nil {
+			results[i] = Result{Namespace: t.pvc.Namespace, Name: t.pvc.Name, Status: StatusFailed, Err: fmt.Errorf("not attempted: %w", err)}
+			d.report(ctx, results[i], t.pvc, false)
 			continue
 		}
-		start := time.Now()
-		r.Err = d.backupOne(ctx, t)
-		r.Duration = time.Since(start)
-		if r.Err == nil {
-			r.Status = StatusOK
-		}
-		d.report(ctx, r, t.pvc, true)
-		results = append(results, r)
+		wg.Go(func() {
+			defer func() { <-sem }()
+			r := Result{Namespace: t.pvc.Namespace, Name: t.pvc.Name, Status: StatusOK}
+			start := time.Now()
+			r.Err = d.backupOne(ctx, t)
+			r.Duration = time.Since(start)
+			if r.Err != nil {
+				r.Status = StatusFailed
+			}
+			d.report(ctx, r, t.pvc, true)
+			results[i] = r
+		})
 	}
-	return results, nil
+	wg.Wait()
+	return results
+}
+
+// acquire takes a slot of sem, or fails once ctx is done.
+func acquire(ctx context.Context, sem chan struct{}) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case sem <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-sem
+			return err
+		}
+		return nil
+	}
 }
 
 func (d *Driver) report(ctx context.Context, r Result, pvc *corev1.PersistentVolumeClaim, event bool) {

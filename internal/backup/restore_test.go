@@ -222,6 +222,49 @@ func TestRestoreLatestIntoNewPVC(t *testing.T) {
 	}
 }
 
+func TestRestoreWithEncryptionKey(t *testing.T) {
+	cfg := testRestoreConfig()
+	cfg.KeySecret = "pbs-key"
+	cfg.KeySecretKey = "key"
+	cfg.ExtraArgs = []string{"--rate", "50MiB"}
+	keySecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "pbs-key", Namespace: toolNS},
+		Data:       map[string][]byte{"key": []byte("key-file")},
+	}
+	h := newRestoreHarness(t, cfg, tokenSecret(), keySecret)
+	if _, err := h.r.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	pods := h.createdPods()
+	list, meta, restore := pods[0], pods[1], pods[2]
+	argsOf := func(p *corev1.Pod) string { return strings.Join(p.Spec.Containers[0].Args, " ") }
+	if strings.Contains(argsOf(list), "--keyfile") {
+		t.Errorf("snapshot list got a key file: %s", argsOf(list))
+	}
+	if !strings.Contains(argsOf(meta), "--keyfile /key/key") || strings.Contains(argsOf(meta), "--rate") {
+		t.Errorf("pvc.conf pod args = %s", argsOf(meta))
+	}
+	if !strings.Contains(argsOf(restore), "--keyfile /key/key") || !strings.Contains(argsOf(restore), "--rate 50MiB") {
+		t.Errorf("restore pod args = %s", argsOf(restore))
+	}
+	for _, v := range restore.Spec.Volumes {
+		if v.Name == "key" && v.Secret.SecretName != restore.Name {
+			t.Errorf("restore pod reads the key from %s, not from the copy", v.Secret.SecretName)
+		}
+	}
+
+	var copied *corev1.Secret
+	for _, a := range h.kube.Actions() {
+		if c, ok := a.(k8stesting.CreateAction); ok && a.GetResource().Resource == "secrets" {
+			copied = c.GetObject().(*corev1.Secret)
+		}
+	}
+	if copied == nil || string(copied.Data["key"]) != "key-file" || string(copied.Data["password"]) != "secret-token" {
+		t.Errorf("copied Secret = %+v", copied)
+	}
+	h.assertNoHelpers(t)
+}
+
 func TestRestoreExplicitSnapshotSkipsList(t *testing.T) {
 	cfg := testRestoreConfig()
 	cfg.Snapshot = "2026-11-04T19:04:09+01:00"

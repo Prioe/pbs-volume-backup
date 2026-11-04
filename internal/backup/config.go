@@ -20,6 +20,10 @@ type Client struct {
 	// TokenSecret names the Secret in Namespace that holds the PBS token.
 	TokenSecret    string
 	TokenSecretKey string
+	// KeySecret optionally names a Secret in Namespace with an encryption
+	// key file. The key must not be password protected.
+	KeySecret    string
+	KeySecretKey string
 }
 
 func (c *Client) validate(needPBS bool) []error {
@@ -39,6 +43,12 @@ func (c *Client) validate(needPBS bool) []error {
 			errs = append(errs, errors.New(f.name+" is required"))
 		}
 	}
+	if c.KeySecret != "" && c.KeySecretKey == "" {
+		errs = append(errs, errors.New("encryption key secret key is required"))
+	}
+	if c.KeySecret != "" && c.KeySecretKey == c.TokenSecretKey {
+		errs = append(errs, errors.New("the token and the encryption key need different Secret keys"))
+	}
 	return errs
 }
 
@@ -50,6 +60,10 @@ type Config struct {
 	SkipValue string
 	// SnapshotClasses maps storage class names to VolumeSnapshotClass names.
 	SnapshotClasses map[string]string
+	// ExtraArgs are appended to the proxmox-backup-client backup call.
+	ExtraArgs []string
+	// Concurrency is the number of PVCs backed up at the same time.
+	Concurrency int
 
 	SnapshotTimeout time.Duration
 	// StartTimeout limits how long a pod may stay Pending, before
@@ -68,6 +82,9 @@ func (c *Config) Validate() error {
 	errs := c.validate(!c.DryRun)
 	if c.SkipLabel == "" {
 		errs = append(errs, errors.New("skip label is required"))
+	}
+	if c.Concurrency < 1 {
+		errs = append(errs, errors.New("concurrency must be at least 1"))
 	}
 	errs = append(errs, positive([]duration{
 		{"snapshot timeout", c.SnapshotTimeout},
@@ -95,6 +112,9 @@ type RestoreConfig struct {
 	// IntoExisting restores into a PVC that already exists instead of
 	// creating it.
 	IntoExisting bool
+	// ExtraArgs are appended to the proxmox-backup-client restore call of
+	// the volume.
+	ExtraArgs []string
 
 	StartTimeout   time.Duration
 	RestoreTimeout time.Duration

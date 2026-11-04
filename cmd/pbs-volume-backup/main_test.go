@@ -71,6 +71,27 @@ func TestBackupFlags(t *testing.T) {
 	}
 }
 
+func TestBackupFlagsM3(t *testing.T) {
+	t.Setenv("PVB_CLIENT_ARGS", "--rate=50MiB --burst=100MiB")
+	t.Setenv("PVB_CONCURRENCY", "3")
+	t.Setenv("PVB_ENCRYPTION_KEY_SECRET", "pbs-key")
+	cfg, _, err := backupFlags([]string{"--client-arg", "--crypt-mode=encrypt"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.ExtraArgs, " ") != "--rate=50MiB --burst=100MiB --crypt-mode=encrypt" {
+		t.Errorf("extra args = %q", cfg.ExtraArgs)
+	}
+	if cfg.Concurrency != 3 || cfg.KeySecret != "pbs-key" || cfg.KeySecretKey != "key" {
+		t.Errorf("cfg = %+v", cfg)
+	}
+
+	t.Setenv("PVB_CONCURRENCY", "many")
+	if _, _, err := backupFlags(nil, io.Discard); err == nil || !strings.Contains(err.Error(), "PVB_CONCURRENCY") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestRestoreFlags(t *testing.T) {
 	cfg, _, err := restoreFlags([]string{"--from", "app/data", "--snapshot", "2026-11-04T18:04:09Z", "--into-existing"}, io.Discard)
 	if err != nil {

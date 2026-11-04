@@ -21,6 +21,8 @@ const (
 	dataPath   = "/data"
 	secretPath = "/secret"
 	tokenFile  = "password"
+	keyPath    = "/key"
+	keyFile    = "key"
 	clientPath = "/usr/bin/proxmox-backup-client"
 )
 
@@ -34,15 +36,26 @@ type clientPod struct {
 	deadline time.Duration
 	volumes  []corev1.Volume
 	mounts   []corev1.VolumeMount
+	// withKey passes the encryption key, if one is configured. snapshot
+	// list rejects --keyfile.
+	withKey bool
+}
+
+// secrets names the Secrets in the pod's namespace that hold the token and
+// the encryption key. They can be the same Secret.
+type secrets struct {
+	token string
+	key   string
 }
 
 // build returns the pod. It runs as root with only caps, mounts the token
-// from secretName at secretPath, and keeps the root filesystem read-only.
-func (p clientPod) build(c *Client, secretName string) *corev1.Pod {
+// at secretPath and the key at keyPath, and keeps the root filesystem
+// read-only.
+func (p clientPod) build(c *Client, s secrets) *corev1.Pod {
 	volumes := slices.Concat(p.volumes, []corev1.Volume{
 		{Name: "secret", VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				SecretName: secretName,
+				SecretName: s.token,
 				Items:      []corev1.KeyToPath{{Key: c.TokenSecretKey, Path: tokenFile}},
 			},
 		}},
@@ -57,6 +70,16 @@ func (p clientPod) build(c *Client, secretName string) *corev1.Pod {
 	args := slices.Clone(p.args)
 	if c.PBSNamespace != "" {
 		args = append(args, "--ns", c.PBSNamespace)
+	}
+	if p.withKey && c.KeySecret != "" {
+		volumes = append(volumes, corev1.Volume{Name: "key", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: s.key,
+				Items:      []corev1.KeyToPath{{Key: c.KeySecretKey, Path: keyFile}},
+			},
+		}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "key", MountPath: keyPath, ReadOnly: true})
+		args = append(args, "--keyfile", keyPath+"/"+keyFile)
 	}
 	return &corev1.Pod{
 		ObjectMeta: p.meta,

@@ -117,9 +117,10 @@ func (d *Driver) backupPod(name string, t target) *corev1.Pod {
 	}
 	return clientPod{
 		meta:     d.meta(d.cfg.Namespace, name, t),
-		args:     args,
+		args:     append(args, d.cfg.ExtraArgs...),
 		caps:     []corev1.Capability{"DAC_OVERRIDE"},
 		deadline: d.cfg.BackupTimeout,
+		withKey:  true,
 		volumes: []corev1.Volume{
 			{Name: "data", VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: name, ReadOnly: true},
@@ -132,5 +133,5 @@ func (d *Driver) backupPod(name string, t target) *corev1.Pod {
 			{Name: "data", MountPath: dataPath, ReadOnly: true},
 			{Name: "meta", MountPath: metaPath, ReadOnly: true},
 		},
-	}.build(&d.cfg.Client, d.cfg.TokenSecret)
+	}.build(&d.cfg.Client, secrets{token: d.cfg.TokenSecret, key: d.cfg.KeySecret})
 }

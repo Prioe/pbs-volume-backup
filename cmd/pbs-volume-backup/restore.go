@@ -38,6 +38,7 @@ func restoreFlags(args []string, stderr io.Writer) (backup.RestoreConfig, bool, 
 	fs.StringVar(&cfg.StorageClass, "storage-class", "", "storage class of the new PVC (default: from the backup)")
 	fs.StringVar(&cfg.Size, "size", "", "size of the new PVC (default: from the backup)")
 	fs.BoolVar(&cfg.IntoExisting, "into-existing", false, "restore into an existing PVC; files from the backup overwrite existing ones")
+	clientArgsFlag(fs, &cfg.ExtraArgs, "PVB_RESTORE_CLIENT_ARGS", "extra option for proxmox-backup-client restore, like --rate=50MiB")
 	fs.DurationVar(&cfg.StartTimeout, "start-timeout", 15*time.Minute, "wait at most this long for each pod to start")
 	fs.DurationVar(&cfg.RestoreTimeout, "restore-timeout", 6*time.Hour, "maximum run time of the restore pod")
 	fs.DurationVar(&cfg.CleanupTimeout, "cleanup-timeout", 2*time.Minute, "maximum time for the cleanup")

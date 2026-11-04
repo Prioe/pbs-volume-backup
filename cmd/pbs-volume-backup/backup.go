@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,18 @@ func clientFlags(fs *flag.FlagSet, c *backup.Client, namespaceHelp string) {
 	fs.StringVar(&c.PBSNamespace, "pbs-namespace", os.Getenv("PBS_NAMESPACE"), "PBS namespace of all backup groups (env PBS_NAMESPACE)")
 	fs.StringVar(&c.TokenSecret, "token-secret", os.Getenv("PVB_TOKEN_SECRET"), "Secret in the tool's namespace with the PBS token (env PVB_TOKEN_SECRET)")
 	fs.StringVar(&c.TokenSecretKey, "token-secret-key", envOr("PVB_TOKEN_SECRET_KEY", "password"), "key of the token in the Secret (env PVB_TOKEN_SECRET_KEY)")
+	fs.StringVar(&c.KeySecret, "encryption-key-secret", os.Getenv("PVB_ENCRYPTION_KEY_SECRET"), "Secret in the tool's namespace with an encryption key file without password; enables encryption (env PVB_ENCRYPTION_KEY_SECRET)")
+	fs.StringVar(&c.KeySecretKey, "encryption-key-secret-key", envOr("PVB_ENCRYPTION_KEY_SECRET_KEY", "key"), "key of the key file in the Secret (env PVB_ENCRYPTION_KEY_SECRET_KEY)")
+}
+
+// clientArgsFlag registers a repeatable flag for extra client options. The
+// environment variable holds them separated by spaces.
+func clientArgsFlag(fs *flag.FlagSet, args *[]string, env, help string) {
+	*args = strings.Fields(os.Getenv(env))
+	fs.Func("client-arg", help+"; repeatable (env "+env+", separated by spaces)", func(s string) error {
+		*args = append(*args, s)
+		return nil
+	})
 }
 
 // backupFlags parses the backup flags. Each flag defaults to the value of
@@ -43,7 +56,9 @@ func backupFlags(args []string, stderr io.Writer) (backup.Config, bool, error) {
 	fs.Func("snapshot-class", "storage class to VolumeSnapshotClass mapping, storageclass=snapshotclass; repeatable, or comma-separated in env PVB_SNAPSHOT_CLASSES", func(s string) error {
 		return addMappings(cfg.SnapshotClasses, s)
 	})
+	clientArgsFlag(fs, &cfg.ExtraArgs, "PVB_CLIENT_ARGS", "extra option for proxmox-backup-client backup, like --rate=50MiB")
 	var envErrs []error
+	fs.IntVar(&cfg.Concurrency, "concurrency", envInt("PVB_CONCURRENCY", 1, &envErrs), "number of PVCs backed up at the same time (env PVB_CONCURRENCY)")
 	fs.DurationVar(&cfg.SnapshotTimeout, "snapshot-timeout", envDuration("PVB_SNAPSHOT_TIMEOUT", 10*time.Minute, &envErrs), "wait at most this long for a snapshot (env PVB_SNAPSHOT_TIMEOUT)")
 	fs.DurationVar(&cfg.StartTimeout, "start-timeout", envDuration("PVB_START_TIMEOUT", 15*time.Minute, &envErrs), "wait at most this long for the backup pod to start (env PVB_START_TIMEOUT)")
 	fs.DurationVar(&cfg.BackupTimeout, "backup-timeout", envDuration("PVB_BACKUP_TIMEOUT", 6*time.Hour, &envErrs), "maximum run time of one backup pod (env PVB_BACKUP_TIMEOUT)")
@@ -148,6 +163,19 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envInt(key string, def int, errs *[]error) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("%s: %w", key, err))
+		return def
+	}
+	return n
 }
 
 func envDuration(key string, def time.Duration, errs *[]error) time.Duration {

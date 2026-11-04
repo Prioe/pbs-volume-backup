@@ -51,6 +51,7 @@ func testConfig() Config {
 		TokenSecretKey:  "password",
 		SkipLabel:       "pbs-volume-backup/skip",
 		SkipValue:       "true",
+		Concurrency:     1,
 		SnapshotTimeout: time.Second,
 		StartTimeout:    time.Minute,
 		BackupTimeout:   time.Hour,
@@ -687,8 +688,95 @@ func TestConfigValidate(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 
-	dry := Config{Namespace: toolNS, SkipLabel: "skip", DryRun: true, SnapshotTimeout: 1, StartTimeout: 1, BackupTimeout: 1, CleanupTimeout: 1}
+	dry := Config{Namespace: toolNS, SkipLabel: "skip", DryRun: true, Concurrency: 1, SnapshotTimeout: 1, StartTimeout: 1, BackupTimeout: 1, CleanupTimeout: 1}
 	if err := dry.Validate(); err != nil {
 		t.Errorf("dry run without PBS settings: %v", err)
 	}
+
+	cfg = testConfig()
+	cfg.KeySecret = "pbs-key"
+	cfg.KeySecretKey = cfg.TokenSecretKey
+	cfg.Concurrency = 0
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "different Secret keys") || !strings.Contains(err.Error(), "concurrency") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestBackupPodEncryptionAndExtraArgs(t *testing.T) {
+	cfg := testConfig()
+	cfg.KeySecret = "pbs-key"
+	cfg.KeySecretKey = "key"
+	cfg.ExtraArgs = []string{"--rate", "50MiB"}
+	h := newHarness(t, cfg, appObjects()...)
+	if _, err := h.d.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	pod := createdPod(t, h)
+	args := strings.Join(pod.Spec.Containers[0].Args, " ")
+	if !strings.Contains(args, "--keyfile /key/key") || !strings.Contains(args, "--rate 50MiB") {
+		t.Errorf("args = %s", args)
+	}
+	var keyVolume *corev1.Volume
+	for i, v := range pod.Spec.Volumes {
+		if v.Name == "key" {
+			keyVolume = &pod.Spec.Volumes[i]
+		}
+	}
+	if keyVolume == nil || keyVolume.Secret.SecretName != "pbs-key" || keyVolume.Secret.Items[0].Key != "key" {
+		t.Errorf("key volume = %+v", keyVolume)
+	}
+}
+
+func TestBackupWithoutKeyHasNoKeyfile(t *testing.T) {
+	h := newHarness(t, testConfig(), appObjects()...)
+	if _, err := h.d.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if args := strings.Join(createdPod(t, h).Spec.Containers[0].Args, " "); strings.Contains(args, "--keyfile") {
+		t.Errorf("args = %s", args)
+	}
+}
+
+// TestConcurrency holds every backup pod Pending until as many pods exist as
+// the concurrency allows. Run only finishes if the backups run in parallel.
+func TestConcurrency(t *testing.T) {
+	const n = 3
+	objs := []runtime.Object{defaultClass("default", csiDriver)}
+	for i := range n {
+		pvc, pv := boundPVC("app", fmt.Sprintf("data-%d", i), nil)
+		objs = append(objs, pvc, pv)
+	}
+	cfg := testConfig()
+	cfg.Concurrency = n
+	h := newHarness(t, cfg, objs...)
+	h.podPhase = corev1.PodPending
+	go func() {
+		for {
+			pods, err := h.kube.CoreV1().Pods(toolNS).List(t.Context(), metav1.ListOptions{})
+			if err != nil {
+				return
+			}
+			if len(pods.Items) == n {
+				for _, p := range pods.Items {
+					p.Status.Phase = corev1.PodSucceeded
+					_, _ = h.kube.CoreV1().Pods(toolNS).UpdateStatus(t.Context(), &p, metav1.UpdateOptions{})
+				}
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	results, err := h.d.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range results {
+		if r.Status != StatusOK || r.Name != fmt.Sprintf("data-%d", i) {
+			t.Errorf("result %d = %+v", i, r)
+		}
+	}
+	h.assertClean(t)
 }

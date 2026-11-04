@@ -14,6 +14,22 @@ have left on disk. Apps that call `fsync` for their data, such as SQLite and
 Postgres, recover from that. Data an app had written but the kernel had not
 yet flushed can show up as zero bytes at the end of a file.
 
+## Encryption
+
+Backups are not encrypted by default. To encrypt them on the client side,
+create a key file without a password (the pods can't ask for one), store it
+in a Secret in the tool's namespace, and pass the Secret's name with
+`--encryption-key-secret`:
+
+```sh
+proxmox-backup-client key create --kdf none pbs-volume-backup.key
+kubectl -n pbs-volume-backup create secret generic pbs-key --from-file=key=pbs-volume-backup.key
+```
+
+Keep a copy of the key outside the cluster. Without it, encrypted backups
+can't be restored. A restore of an encrypted backup needs the same flag; the
+tool copies the key into the target namespace together with the token.
+
 ## Restore
 
 `pbs-volume-backup restore` restores a backup of a PVC. It runs on your

@@ -124,11 +124,12 @@ Closes R5 and R7, and the Should items.
 - Done early in M2: the client call, the token from the Secret in the
   tool's namespace, and `pvc.conf` from a ConfigMap. `run-client` was
   dropped: the pod calls `proxmox-backup-client` directly.
-- Extra client options passed through (for example `--crypt-mode` and a key
-  file).
+- Extra client options passed through: `--client-arg` for backup and for
+  restore. Encryption has its own flag, `--encryption-key-secret`: the key
+  file needs a Secret mount, and restore has to copy it with the token.
 - `--dry-run`: print the PVCs that would be backed up and the snapshot class
   each would use. Done early, before the first run on the homelab.
-- Concurrency: a worker pool, default 1.
+- Concurrency: `--concurrency`, default 1.
 
 Done when: the homelab has a backup with both archives in PBS and a second
 run shows the effect of the change detection mode measured in spike 5.

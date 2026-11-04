@@ -90,7 +90,7 @@ func (r *Restorer) Run(ctx context.Context) (snapshot string, err error) {
 		return "", err
 	}
 	r.log.Info("restoring", "snapshot", snapshot, "pvc", target)
-	logs, err := r.runInfoPod(ctx, metaName, []string{"restore", snapshot, "pvc.conf", "-"}, &undo)
+	logs, err := r.runInfoPod(ctx, metaName, []string{"restore", snapshot, "pvc.conf", "-"}, true, &undo)
 	if err != nil {
 		return "", fmt.Errorf("read pvc.conf: %w", err)
 	}
@@ -246,7 +246,7 @@ func (r *Restorer) resolveSnapshot(ctx context.Context, listName string, undo *c
 		}
 		return group + "/" + t.UTC().Format(snapshotTimeLayout), nil
 	}
-	logs, err := r.runInfoPod(ctx, listName, []string{"snapshot", "list", group, "--output-format", "json"}, undo)
+	logs, err := r.runInfoPod(ctx, listName, []string{"snapshot", "list", group, "--output-format", "json"}, false, undo)
 	if err != nil {
 		return "", fmt.Errorf("list snapshots of %s: %w", group, err)
 	}
@@ -272,13 +272,14 @@ func (r *Restorer) resolveSnapshot(ctx context.Context, listName string, undo *c
 
 // runInfoPod runs the client in the tool's namespace, where the token
 // Secret is, and returns its output.
-func (r *Restorer) runInfoPod(ctx context.Context, name string, args []string, undo *cleanup) (string, error) {
+func (r *Restorer) runInfoPod(ctx context.Context, name string, args []string, withKey bool, undo *cleanup) (string, error) {
 	c := &r.cfg
 	pod := clientPod{
 		meta:     metav1.ObjectMeta{Name: name, Namespace: c.Namespace, Labels: managedLabels()},
 		args:     args,
 		deadline: c.StartTimeout,
-	}.build(&c.Client, c.TokenSecret)
+		withKey:  withKey,
+	}.build(&c.Client, secrets{token: c.TokenSecret, key: c.KeySecret})
 	if _, err := r.kube.CoreV1().Pods(c.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		return "", fmt.Errorf("create pod: %w", err)
 	}
@@ -372,9 +373,21 @@ func (r *Restorer) copyToken(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("token secret %s/%s has no key %q", c.Namespace, c.TokenSecret, c.TokenSecretKey)
 	}
+	data := map[string][]byte{c.TokenSecretKey: token}
+	if c.KeySecret != "" {
+		src, err := r.kube.CoreV1().Secrets(c.Namespace).Get(ctx, c.KeySecret, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get encryption key Secret: %w", err)
+		}
+		key, ok := src.Data[c.KeySecretKey]
+		if !ok {
+			return fmt.Errorf("encryption key secret %s/%s has no key %q", c.Namespace, c.KeySecret, c.KeySecretKey)
+		}
+		data[c.KeySecretKey] = key
+	}
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.TargetNamespace, Labels: managedLabels()},
-		Data:       map[string][]byte{c.TokenSecretKey: token},
+		Data:       data,
 	}
 	if _, err := r.kube.CoreV1().Secrets(c.TargetNamespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("copy token Secret: %w", err)
@@ -395,12 +408,13 @@ func (r *Restorer) restorePod(name, snapshot string) *corev1.Pod {
 			Labels:      managedLabels(),
 			Annotations: map[string]string{restoredFromAnnotation: snapshot},
 		},
-		args:     args,
+		args:     append(args, c.ExtraArgs...),
 		caps:     restoreCaps,
 		deadline: c.RestoreTimeout,
+		withKey:  true,
 		volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: c.TargetPVC},
 		}}},
 		mounts: []corev1.VolumeMount{{Name: "data", MountPath: dataPath}},
-	}.build(&c.Client, name)
+	}.build(&c.Client, secrets{token: name, key: name})
 }
