@@ -132,7 +132,9 @@ Closes R5 and R7, and the Should items.
 - Concurrency: `--concurrency`, default 1.
 
 Done when: the homelab has a backup with both archives in PBS and a second
-run shows the effect of the change detection mode measured in spike 5.
+run shows the effect of the change detection mode measured in spike 5. Done
+on 2026-11-04 with the Helm chart: the second run of a 1 GB volume uploaded
+32 bytes and took 24 s, nearly all of it snapshot, clone and pod start.
 
 ## M4: Restore
 
