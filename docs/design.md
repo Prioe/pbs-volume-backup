@@ -230,17 +230,32 @@ Btrfs) with the manifests in [spikes/](../spikes/README.md):
 
 ## Release
 
-- GoReleaser builds the binary and the image on a tag and pushes the image to
-  `ghcr.io/prioe/pbs-volume-backup`.
-- Before that, CI builds the image once per commit as a single-platform tar
-  and hands it to the end-to-end test as an artifact; pull requests push
-  nothing. On `main`, after all tests pass, CI builds it again from the same
-  inputs and build cache and pushes it as `main` and `sha-<commit>`, with
-  BuildKit's provenance attestation. The pushed image is a rebuild, not the
-  tested tar.
-- The same workflow pushes the chart as an OCI artifact to
+One workflow (`.github/workflows/ci.yaml`) handles pull requests, `main` and
+version tags `v*`, so a release goes through the same jobs and tests as every
+other commit:
+
+- CI builds the image once per run as a single-platform tar and hands it to
+  the end-to-end test as an artifact. Pull requests push nothing.
+- On `main` and on tags, after all tests pass, CI builds the image again from
+  the same inputs and build cache and pushes it to
+  `ghcr.io/prioe/pbs-volume-backup`, with BuildKit's provenance attestation:
+  as `main` and `sha-<commit>` on `main`, and as `<version>` and
+  `<major>.<minor>` on a tag. The pushed image is a rebuild, not the tested
+  tar.
+- The version comes from the tag without the `v` (tag `v0.1.0`, version
+  `0.1.0`) and is compiled into the binary; on `main` it is the commit SHA.
+  The image job checks that `pbs-volume-backup version` prints it.
+- On a tag, GoReleaser then builds the binaries for Linux and macOS (amd64
+  and arm64, for `restore` on the operator's machine) with the same flags as
+  the Dockerfile, and creates the GitHub release with checksums. It does not
+  build the image: the image's compile path is the one the end-to-end test
+  covers.
+- The same job pushes the chart as an OCI artifact to
   `oci://ghcr.io/prioe/charts/pbs-volume-backup`, with chart version and
-  `appVersion` equal to the tag.
+  `appVersion` equal to the version. In the repo the chart stays at `0.0.0`
+  and `main`.
+- The release build of the binaries runs without the Go build cache, so a
+  poisoned cache can't reach published binaries.
 - The repo and both packages are public, so clusters need no pull secret.
 
 ## Cluster prerequisites (done in the cluster's own repo)

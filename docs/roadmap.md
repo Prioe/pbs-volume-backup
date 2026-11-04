@@ -185,8 +185,11 @@ Done when: the e2e job runs on every pull request and passes. Done on
 
 ## M7: Release
 
-- GoReleaser builds the binary and the image and pushes the image to
-  `ghcr.io/prioe/pbs-volume-backup` on a tag.
+- A tag `v*` runs the normal CI workflow: the image is built with the
+  version, tested end to end, and pushed to `ghcr.io/prioe/pbs-volume-backup`
+  with version tags.
+- GoReleaser builds only the binaries and the GitHub release; the image comes
+  from the Dockerfile, the path the end-to-end test covers.
 - The same workflow pushes the chart to
   `oci://ghcr.io/prioe/charts/pbs-volume-backup`, with version and
   `appVersion` equal to the tag.

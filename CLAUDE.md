@@ -7,15 +7,20 @@ Helm chart.
 `docs/design.md` holds the requirements and the design. Read it before
 changing behavior, and update it in the same change when the design moves.
 
-## Layout (planned)
+## Layout
 
 - `cmd/pbs-volume-backup/`: main package, subcommands `backup`, `restore`.
-- `internal/`: driver logic (selection, snapshot, clone, pod, cleanup).
+- `internal/backup/`: driver and restore logic (selection, snapshot, clone,
+  pod, cleanup).
 - `charts/pbs-volume-backup/`: Helm chart.
 - `Dockerfile`: image with the binary and the official
   `proxmox-backup-client-static` package (pinned version and SHA-256).
-- `.goreleaser.yaml`: binary and image; the release workflow also pushes the
-  chart as OCI.
+- `.goreleaser.yaml`: release binaries only; the image comes from the
+  Dockerfile.
+- `.github/workflows/ci.yaml`: tests, image, end-to-end test, publishing and
+  releases on `v*` tags.
+- `test/e2e/run.sh`: end-to-end test on kind with a PBS container.
+- `spikes/`: the manual tests of milestone M0.
 
 ## Rules
 

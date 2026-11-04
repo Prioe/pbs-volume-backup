@@ -36,7 +36,8 @@ backup pods run as root, so the namespace must allow Pod Security
 kubectl create namespace pbs-volume-backup
 kubectl label namespace pbs-volume-backup pod-security.kubernetes.io/enforce=baseline
 kubectl -n pbs-volume-backup create secret generic pbs-token --from-file=password=/path/to/token-secret
-helm install pbs-volume-backup ./charts/pbs-volume-backup -n pbs-volume-backup \
+helm install pbs-volume-backup oci://ghcr.io/prioe/charts/pbs-volume-backup \
+  --version <version> -n pbs-volume-backup \
   --set pbs.repository='user@pbs!token@pbs.example:datastore' \
   --set pbs.fingerprint=<fingerprint> \
   --set pbs.namespace=<namespace> \
@@ -46,6 +47,11 @@ helm install pbs-volume-backup ./charts/pbs-volume-backup -n pbs-volume-backup \
 All values are documented in
 [charts/pbs-volume-backup/values.yaml](charts/pbs-volume-backup/values.yaml).
 Use the namespace only for pbs-volume-backup: PVCs in it are not backed up.
+
+The versions are listed on the
+[releases page](https://github.com/prioe/pbs-volume-backup/releases). Each
+release also has the `pbs-volume-backup` binary for Linux and macOS, which you
+need for `restore` and `--dry-run`.
 
 To see what a run would back up without changing anything, run the binary
 with your kubeconfig: `pbs-volume-backup backup --dry-run --namespace

@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -15,7 +16,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      # Test-only job: nothing it builds is published.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 # zizmor: ignore[cache-poisoning]
         with:
           go-version-file: go.mod
       - run: go vet ./...
@@ -33,7 +35,8 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      # Test-only job: nothing it builds is published.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 # zizmor: ignore[cache-poisoning]
         with:
           go-version-file: go.mod
       - run: helm lint charts/pbs-volume-backup -f charts/pbs-volume-backup/ci/full-values.yaml
@@ -44,26 +47,34 @@ jobs:
   # again from the same cache and inputs, with push and provenance.
   image:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then version=${GITHUB_REF_NAME#v}; else version=$GITHUB_SHA; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64
           tags: pbs-volume-backup:ci
-          build-args: VERSION=${{ github.sha }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
           provenance: false
           sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=${{ runner.temp }}/image.tar
-      - run: |
+      - env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
           docker load -i "$RUNNER_TEMP/image.tar"
           docker run --rm --entrypoint /usr/bin/proxmox-backup-client pbs-volume-backup:ci version
-          docker run --rm pbs-volume-backup:ci version
+          test "$(docker run --rm pbs-volume-backup:ci version)" = "$VERSION"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image
@@ -80,7 +91,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      # Test-only job: nothing it builds is published.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 # zizmor: ignore[cache-poisoning]
         with:
           go-version-file: go.mod
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
@@ -97,8 +109,8 @@ jobs:
           E2E_IMAGE_TAR: ${{ runner.temp }}/image.tar
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [go, chart, e2e]
+    if: github.event_name == 'push'
+    needs: [go, chart, image, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,8 +130,10 @@ jobs:
         with:
           images: ghcr.io/prioe/pbs-volume-backup
           tags: |
-            type=raw,value=main
+            type=raw,value=main,enable={{is_default_branch}}
             type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -127,5 +141,38 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.sha }}
+          build-args: VERSION=${{ needs.image.outputs.version }}
           cache-from: type=gha
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [image, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v2.20.0
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      - env:
+          VERSION: ${{ needs.image.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          helm package charts/pbs-volume-backup --version "$VERSION" --app-version "$VERSION" -d "$RUNNER_TEMP"
+          printf '%s' "$GITHUB_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          helm push "$RUNNER_TEMP/pbs-volume-backup-$VERSION.tgz" oci://ghcr.io/prioe/charts

@@ -1,0 +1,27 @@
+version: 2
+
+builds:
+  - id: pbs-volume-backup
+    main: ./cmd/pbs-volume-backup
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    # Same flags as the Dockerfile, so these binaries match the one in the image.
+    flags: [-trimpath]
+    ldflags:
+      - "-s -w -X main.version={{ .Version }}"
+
+archives:
+  - formats: [tar.gz]
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+
+release:
+  footer: |
+    Image: `ghcr.io/prioe/pbs-volume-backup:{{ .Version }}`
+    Chart: `oci://ghcr.io/prioe/charts/pbs-volume-backup --version {{ .Version }}`
