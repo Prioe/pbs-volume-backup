@@ -23,7 +23,10 @@ func (d *Driver) sweep(ctx context.Context) error {
 		return fmt.Errorf("list pods: %w", err)
 	}
 	for _, p := range pods.Items {
-		errs = append(errs, d.deletePod(ctx, p.Name))
+		// A restore's helper pods share the namespace and may be running.
+		if strings.HasPrefix(p.Name, namePrefix) {
+			errs = append(errs, d.deletePod(ctx, p.Name))
+		}
 	}
 	cms, err := core.ConfigMaps(d.cfg.Namespace).List(ctx, sel)
 	if err != nil {

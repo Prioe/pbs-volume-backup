@@ -627,6 +627,19 @@ func TestCleanupContextOutlivesCancel(t *testing.T) {
 	}
 }
 
+func TestSweepKeepsRestorePods(t *testing.T) {
+	restorePod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: dnsName(restoreNamePrefix, "app", "data", "-list"), Namespace: toolNS, Labels: managedLabels(),
+	}}
+	h := newHarness(t, testConfig(), restorePod)
+	if _, err := h.d.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.kube.CoreV1().Pods(toolNS).Get(t.Context(), restorePod.Name, metav1.GetOptions{}); err != nil {
+		t.Errorf("sweep deleted a restore pod: %v", err)
+	}
+}
+
 func TestSweepErrorStopsRun(t *testing.T) {
 	h := newHarness(t, testConfig(), appObjects()...)
 	h.kube.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
