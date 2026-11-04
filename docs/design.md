@@ -220,9 +220,13 @@ Btrfs) with the manifests in [spikes/](../spikes/README.md):
 
 - Unit tests for PVC selection, object naming, and cleanup after each failing
   step (fake clientset).
-- End-to-end in CI: kind with the CSI hostpath driver (it supports
-  snapshots and clones) and a PBS instance in a container. Back up a PVC,
-  restore it into a new PVC, compare the files.
+- End-to-end in CI (`test/e2e/run.sh`): kind with the CSI hostpath driver
+  (it supports snapshots and clones) and a PBS instance in a container. Install
+  the chart, back up twice, check the snapshots in PBS and that nothing is left
+  behind, restore into a new PVC, and compare names, owners, modes and
+  checksums. The storage class uses `Retain`, like the first user's, so the
+  test also covers the clone PV cleanup. PBS comes from the community image
+  `ayufan/proxmox-backup-server`, pinned by digest; Proxmox publishes none.
 
 ## Release
 
@@ -247,4 +251,4 @@ Btrfs) with the manifests in [spikes/](../spikes/README.md):
 
 ## Open questions
 
-- Which PBS container image to use in CI (Proxmox publishes none).
+None.

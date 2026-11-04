@@ -40,6 +40,22 @@ jobs:
       - run: helm template pvb charts/pbs-volume-backup -f charts/pbs-volume-backup/ci/full-values.yaml > rendered.yaml
       - run: go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -strict -summary rendered.yaml
 
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      - run: go install sigs.k8s.io/kind@v0.33.0
+      - run: ./test/e2e/run.sh
+
   image:
     runs-on: ubuntu-latest
     steps:
@@ -59,7 +75,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [go, chart, image]
+    needs: [go, chart, e2e, image]
     runs-on: ubuntu-latest
     permissions:
       contents: read

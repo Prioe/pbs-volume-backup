@@ -39,9 +39,10 @@ one is needed.
 2. **License.** Decided: AGPL-3.0-or-later, the same as
    `proxmox-backup-client`.
 
-3. **PBS in CI (open question).** Proxmox publishes no container image.
-   Research the options (a community image, or one built from the Proxmox
-   apt repository in this repo) and pick one. Only M6 depends on it.
+3. **PBS in CI.** Decided: the community image
+   `ayufan/proxmox-backup-server`, pinned by digest. It is built from the
+   Proxmox sources and current. An own image from the Proxmox apt repository
+   would need the daemons started without systemd.
 
 ### Spikes on the homelab cluster
 
@@ -176,8 +177,8 @@ succeeds.
   snapshot-controller, and PBS from decision 3.
 - Install the chart, run the backup job, restore into a new PVC, compare the
   files.
-- Failure cases: a PVC with the opt-out label is skipped; a forced failure
-  leaves no objects behind and fails the job.
+- Failure cases: a PVC with the opt-out label is skipped. Cleanup after a
+  failure at each step is covered by the unit tests, not by this test.
 
 Done when: the e2e job runs on every pull request and passes.
 
