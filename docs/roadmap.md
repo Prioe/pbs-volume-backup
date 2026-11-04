@@ -180,7 +180,8 @@ succeeds.
 - Failure cases: a PVC with the opt-out label is skipped. Cleanup after a
   failure at each step is covered by the unit tests, not by this test.
 
-Done when: the e2e job runs on every pull request and passes.
+Done when: the e2e job runs on every pull request and passes. Done on
+2026-11-04: the first CI run with the e2e test passed (run 41916870937).
 
 ## M7: Release
 
