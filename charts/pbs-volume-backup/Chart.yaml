@@ -1,0 +1,9 @@
+apiVersion: v2
+name: pbs-volume-backup
+description: Backs up every PVC to a Proxmox Backup Server through CSI snapshots.
+type: application
+version: 0.0.0
+appVersion: main
+home: https://github.com/prioe/pbs-volume-backup
+sources:
+  - https://github.com/prioe/pbs-volume-backup

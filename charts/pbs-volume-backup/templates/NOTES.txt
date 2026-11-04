@@ -1,0 +1,7 @@
+pbs-volume-backup runs on the schedule "{{ .Values.schedule }}".
+
+The backup pods run as root in namespace {{ .Release.Namespace }}, which must
+allow Pod Security "baseline".
+
+Start a backup now:
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "pvb.fullname" . }} {{ include "pvb.fullname" . }}-manual

@@ -14,6 +14,43 @@ have left on disk. Apps that call `fsync` for their data, such as SQLite and
 Postgres, recover from that. Data an app had written but the kernel had not
 yet flushed can show up as zero bytes at the end of a file.
 
+## Install
+
+Prerequisites in the cluster:
+
+- The VolumeSnapshot CRDs, the snapshot-controller, and for each CSI driver
+  a `csi-snapshotter` sidecar at a version that matches the controller.
+- For each CSI driver a default `VolumeSnapshotClass` (annotation
+  `snapshot.storage.kubernetes.io/is-default-class: "true"`) with
+  `deletionPolicy: Delete`, or a mapping in the values.
+
+On the PBS: a namespace for the cluster, and an API token with
+`DatastoreBackup` on that namespace only. Prune jobs, verification and
+garbage collection stay on the PBS.
+
+Then create the namespace and the token Secret, and install the chart. The
+backup pods run as root, so the namespace must allow Pod Security
+`baseline`:
+
+```sh
+kubectl create namespace pbs-volume-backup
+kubectl label namespace pbs-volume-backup pod-security.kubernetes.io/enforce=baseline
+kubectl -n pbs-volume-backup create secret generic pbs-token --from-file=password=/path/to/token-secret
+helm install pbs-volume-backup ./charts/pbs-volume-backup -n pbs-volume-backup \
+  --set pbs.repository='user@pbs!token@pbs.example:datastore' \
+  --set pbs.fingerprint=<fingerprint> \
+  --set pbs.namespace=<namespace> \
+  --set pbs.tokenSecret.name=pbs-token
+```
+
+All values are documented in
+[charts/pbs-volume-backup/values.yaml](charts/pbs-volume-backup/values.yaml).
+Use the namespace only for pbs-volume-backup: PVCs in it are not backed up.
+
+To see what a run would back up without changing anything, run the binary
+with your kubeconfig: `pbs-volume-backup backup --dry-run --namespace
+pbs-volume-backup`.
+
 ## Encryption
 
 Backups are not encrypted by default. To encrypt them on the client side,

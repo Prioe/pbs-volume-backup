@@ -1,0 +1,20 @@
+pbs:
+  repository: backup@pbs!k8s@pbs.example:store
+  fingerprint: "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
+  namespace: cluster
+  tokenSecret:
+    name: pbs-token
+  encryptionKeySecret:
+    name: pbs-key
+timeZone: Europe/Berlin
+snapshotClasses:
+  fast: fast-snapshots
+  slow: slow-snapshots
+concurrency: 2
+extraClientArgs: [--rate=50MiB, --burst=100MiB]
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+nodeSelector:
+  kubernetes.io/os: linux

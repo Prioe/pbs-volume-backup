@@ -1,0 +1,113 @@
+{{- $classes := list }}
+{{- range $storageClass, $snapshotClass := .Values.snapshotClasses }}
+{{- $classes = append $classes (printf "%s=%s" $storageClass $snapshotClass) }}
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "pvb.fullname" . }}
+  labels:
+    {{- include "pvb.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  {{- with .Values.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ .Values.job.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.job.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.job.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ .Values.job.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "pvb.selectorLabels" . | nindent 12 }}
+            {{- with .Values.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          serviceAccountName: {{ include "pvb.fullname" . }}
+          restartPolicy: Never
+          terminationGracePeriodSeconds: {{ .Values.job.terminationGracePeriodSeconds }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: {{ include "pvb.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: [backup]
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: PVB_IMAGE
+                  value: {{ include "pvb.image" . | quote }}
+                - name: PBS_REPOSITORY
+                  value: {{ required "pbs.repository is required" .Values.pbs.repository | quote }}
+                - name: PBS_FINGERPRINT
+                  value: {{ required "pbs.fingerprint is required" .Values.pbs.fingerprint | quote }}
+                - name: PBS_NAMESPACE
+                  value: {{ .Values.pbs.namespace | quote }}
+                - name: PVB_TOKEN_SECRET
+                  value: {{ required "pbs.tokenSecret.name is required" .Values.pbs.tokenSecret.name | quote }}
+                - name: PVB_TOKEN_SECRET_KEY
+                  value: {{ .Values.pbs.tokenSecret.key | quote }}
+                {{- with .Values.pbs.encryptionKeySecret.name }}
+                - name: PVB_ENCRYPTION_KEY_SECRET
+                  value: {{ . | quote }}
+                - name: PVB_ENCRYPTION_KEY_SECRET_KEY
+                  value: {{ $.Values.pbs.encryptionKeySecret.key | quote }}
+                {{- end }}
+                - name: PVB_SKIP_LABEL
+                  value: {{ .Values.skipLabel | quote }}
+                {{- with $classes }}
+                - name: PVB_SNAPSHOT_CLASSES
+                  value: {{ join "," . | quote }}
+                {{- end }}
+                - name: PVB_CONCURRENCY
+                  value: {{ .Values.concurrency | quote }}
+                {{- with .Values.extraClientArgs }}
+                - name: PVB_CLIENT_ARGS
+                  value: {{ join " " . | quote }}
+                {{- end }}
+                - name: PVB_SNAPSHOT_TIMEOUT
+                  value: {{ .Values.timeouts.snapshot | quote }}
+                - name: PVB_START_TIMEOUT
+                  value: {{ .Values.timeouts.start | quote }}
+                - name: PVB_BACKUP_TIMEOUT
+                  value: {{ .Values.timeouts.backup | quote }}
+                - name: PVB_CLEANUP_TIMEOUT
+                  value: {{ .Values.timeouts.cleanup | quote }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              {{- with .Values.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

@@ -1,0 +1,79 @@
+# Image of the driver and of the backup pods it starts.
+image:
+  repository: ghcr.io/prioe/pbs-volume-backup
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# When the backup runs, in cron syntax.
+schedule: "0 2 * * *"
+# Time zone of the schedule, like Europe/Berlin. Empty means the time zone of
+# the kube-controller-manager, usually UTC.
+timeZone: ""
+
+pbs:
+  # Required. Repository as user@realm!token@host:datastore.
+  repository: ""
+  # Required. SHA-256 fingerprint of the PBS certificate.
+  fingerprint: ""
+  # PBS namespace for all backup groups. Empty means the datastore's root.
+  namespace: ""
+  # Required. Secret in the release namespace with the secret of the API
+  # token. The chart does not create it.
+  tokenSecret:
+    name: ""
+    key: password
+  # Secret in the release namespace with an encryption key file without a
+  # password. When set, all backups are encrypted. Keep a copy of the key
+  # outside the cluster: without it, the backups can't be restored.
+  encryptionKeySecret:
+    name: ""
+    key: key
+
+# PVCs with this label, as key=value, are not backed up.
+skipLabel: pbs-volume-backup/skip=true
+
+# Maps storage classes to VolumeSnapshotClasses. A storage class without an
+# entry uses the default VolumeSnapshotClass of its CSI driver.
+snapshotClasses: {}
+#  synology-iscsi: synology-iscsi
+
+# Number of PVCs backed up at the same time.
+concurrency: 1
+
+# Extra options for proxmox-backup-client backup, like --rate=50MiB.
+extraClientArgs: []
+
+timeouts:
+  # Wait at most this long for a snapshot to become ready.
+  snapshot: 10m
+  # Wait at most this long for a backup pod to start.
+  start: 15m
+  # Maximum run time of one backup pod.
+  backup: 6h
+  # Maximum time for the cleanup of one volume.
+  cleanup: 2m
+
+job:
+  # A run that takes longer is stopped. The driver then cleans up within
+  # terminationGracePeriodSeconds.
+  activeDeadlineSeconds: 82800
+  # Must be longer than timeouts.cleanup.
+  terminationGracePeriodSeconds: 180
+  # A run that could not start within this many seconds of its schedule is
+  # skipped.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+# Resources of the driver container. The backup pods it starts have none.
+resources: {}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+serviceAccount:
+  annotations: {}
