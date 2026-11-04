@@ -43,6 +43,7 @@ func backupFlags(args []string, stderr io.Writer) (backup.Config, bool, error) {
 	fs.DurationVar(&cfg.BackupTimeout, "backup-timeout", envDuration("PVB_BACKUP_TIMEOUT", 6*time.Hour, &envErrs), "maximum run time of one backup pod (env PVB_BACKUP_TIMEOUT)")
 	fs.DurationVar(&cfg.CleanupTimeout, "cleanup-timeout", envDuration("PVB_CLEANUP_TIMEOUT", 2*time.Minute, &envErrs), "maximum time for the cleanup of one volume (env PVB_CLEANUP_TIMEOUT)")
 	verbose := fs.Bool("v", false, "log the client output of each backup")
+	fs.BoolVar(&cfg.DryRun, "dry-run", false, "only list what would be backed up; change nothing")
 	if err := fs.Parse(args); err != nil {
 		return cfg, false, errUsage
 	}
@@ -106,7 +107,11 @@ func runBackup(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	for _, r := range results {
 		counts[r.Status]++
 	}
-	log.Info("done", "ok", counts[backup.StatusOK], "failed", counts[backup.StatusFailed], "skipped", counts[backup.StatusSkipped])
+	summary := []any{"ok", counts[backup.StatusOK], "failed", counts[backup.StatusFailed], "skipped", counts[backup.StatusSkipped]}
+	if cfg.DryRun {
+		summary = []any{"planned", counts[backup.StatusPlanned], "failed", counts[backup.StatusFailed], "skipped", counts[backup.StatusSkipped]}
+	}
+	log.Info("done", summary...)
 	if counts[backup.StatusFailed] > 0 {
 		return errFailed
 	}

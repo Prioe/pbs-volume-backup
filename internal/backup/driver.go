@@ -29,6 +29,7 @@ const (
 	StatusOK      Status = "ok"
 	StatusFailed  Status = "failed"
 	StatusSkipped Status = "skipped"
+	StatusPlanned Status = "planned"
 )
 
 // Result is the outcome of one PVC in a run.
@@ -57,17 +58,27 @@ func NewDriver(kube kubernetes.Interface, snap snapclient.Interface, cfg Config,
 
 // Run removes leftovers of earlier runs, then backs up every selected PVC
 // one after the other. It returns one result per PVC that is not managed by
-// the tool.
+// the tool. A dry run only reports the selection.
 func (d *Driver) Run(ctx context.Context) ([]Result, error) {
-	if err := d.sweep(ctx); err != nil {
-		return nil, fmt.Errorf("remove leftovers: %w", err)
+	if !d.cfg.DryRun {
+		if err := d.sweep(ctx); err != nil {
+			return nil, fmt.Errorf("remove leftovers: %w", err)
+		}
 	}
 	targets, results, err := d.selectTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range results {
-		d.report(ctx, r, nil, true)
+		d.report(ctx, r, nil, !d.cfg.DryRun)
+	}
+	if d.cfg.DryRun {
+		for _, t := range targets {
+			r := Result{Namespace: t.pvc.Namespace, Name: t.pvc.Name, Status: StatusPlanned, Reason: "snapshot class " + t.snapshotClass}
+			d.report(ctx, r, t.pvc, false)
+			results = append(results, r)
+		}
+		return results, nil
 	}
 	for _, t := range targets {
 		r := Result{Namespace: t.pvc.Namespace, Name: t.pvc.Name, Status: StatusFailed}

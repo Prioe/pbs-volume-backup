@@ -31,20 +31,29 @@ type Config struct {
 	StartTimeout   time.Duration
 	BackupTimeout  time.Duration
 	CleanupTimeout time.Duration
+
+	// DryRun only reports the selection and changes nothing in the cluster.
+	DryRun bool
 }
 
-// Validate reports missing or invalid settings.
+// Validate reports missing or invalid settings. A dry run needs only the
+// settings that the selection uses.
 func (c *Config) Validate() error {
 	var errs []error
-	for _, f := range []struct{ name, value string }{
+	required := []struct{ name, value string }{
 		{"namespace", c.Namespace},
-		{"image", c.Image},
-		{"repository", c.Repository},
-		{"fingerprint", c.Fingerprint},
-		{"token secret", c.TokenSecret},
-		{"token secret key", c.TokenSecretKey},
 		{"skip label", c.SkipLabel},
-	} {
+	}
+	if !c.DryRun {
+		required = append(required, []struct{ name, value string }{
+			{"image", c.Image},
+			{"repository", c.Repository},
+			{"fingerprint", c.Fingerprint},
+			{"token secret", c.TokenSecret},
+			{"token secret key", c.TokenSecretKey},
+		}...)
+	}
+	for _, f := range required {
 		if f.value == "" {
 			errs = append(errs, errors.New(f.name+" is required"))
 		}

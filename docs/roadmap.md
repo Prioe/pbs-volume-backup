@@ -125,7 +125,7 @@ Closes R5 and R7, and the Should items.
 - Extra client options passed through (for example `--crypt-mode` and a key
   file).
 - `--dry-run`: print the PVCs that would be backed up and the snapshot class
-  each would use.
+  each would use. Done early, before the first run on the homelab.
 - Concurrency: a worker pool, default 1.
 
 Done when: the homelab has a backup with both archives in PBS and a second

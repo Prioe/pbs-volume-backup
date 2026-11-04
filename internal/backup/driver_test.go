@@ -444,6 +444,32 @@ func TestRunFailureCleansUp(t *testing.T) {
 	}
 }
 
+func TestDryRunChangesNothing(t *testing.T) {
+	cfg := testConfig()
+	cfg.DryRun = true
+	nfs, nfsPV := boundPVC("app", "nfs", nil)
+	nfsPV.Spec.CSI = nil
+	leftover := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: objectName("app", "data"), Namespace: toolNS, Labels: managedLabels()}}
+	h := newHarness(t, cfg, append(appObjects(), nfs, nfsPV, leftover)...)
+
+	results, err := h.d.Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range results {
+		got[r.Name] = string(r.Status) + " " + r.Reason
+	}
+	if got["data"] != "planned snapshot class default" || !strings.HasPrefix(got["nfs"], "failed") || len(got) != 2 {
+		t.Errorf("results = %v", got)
+	}
+	for _, a := range append(h.kube.Actions(), h.snap.Actions()...) {
+		if v := a.GetVerb(); v != "list" && v != "get" && v != "watch" {
+			t.Errorf("dry run did %s %s", v, a.GetResource().Resource)
+		}
+	}
+}
+
 func TestCancelSkipsRemainingWithoutEvents(t *testing.T) {
 	first, firstPV := boundPVC("app", "a", nil)
 	second, secondPV := boundPVC("app", "b", nil)
@@ -646,5 +672,10 @@ func TestConfigValidate(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "repository") || !strings.Contains(err.Error(), "backup timeout") {
 		t.Errorf("err = %v", err)
+	}
+
+	dry := Config{Namespace: toolNS, SkipLabel: "skip", DryRun: true, SnapshotTimeout: 1, StartTimeout: 1, BackupTimeout: 1, CleanupTimeout: 1}
+	if err := dry.Validate(); err != nil {
+		t.Errorf("dry run without PBS settings: %v", err)
 	}
 }
