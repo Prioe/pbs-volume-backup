@@ -67,9 +67,10 @@ address, datastore and namespace come from Helm values.
       namespaces;
     - list, create, get and delete VolumeSnapshotContents;
     - list VolumeSnapshotClasses;
-    - list, get, patch and delete PVs;
-    - list, create, get and delete PVCs, Pods and ConfigMaps, and get
-      `pods/log`, in its own namespace;
+    - list and patch PVs (the patch sets a clone's PV to `Delete`);
+    - create, get and delete PVCs, list, create, get and delete Pods, list,
+      create and delete ConfigMaps, and get `pods/log`, in its own
+      namespace;
     - create Events.
 
     It reads no Secrets: the backup pod mounts the token Secret from the

@@ -1,7 +1,8 @@
 # Image of the driver and of the backup pods it starts.
 image:
   repository: ghcr.io/prioe/pbs-volume-backup
-  # Defaults to the chart's appVersion.
+  # Defaults to the chart's appVersion. Before the first release that is
+  # "main", a moving tag that nodes cache: pin a sha-<commit> tag instead.
   tag: ""
   pullPolicy: IfNotPresent
 

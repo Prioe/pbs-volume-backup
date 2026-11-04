@@ -21,7 +21,7 @@ rules:
     verbs: [list]
   - apiGroups: [""]
     resources: [persistentvolumes]
-    verbs: [list, get, patch, delete]
+    verbs: [list, patch]
   - apiGroups: [""]
     resources: [events]
     verbs: [create]
@@ -55,8 +55,11 @@ metadata:
     {{- include "pvb.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
-    resources: [pods, configmaps]
+    resources: [pods]
     verbs: [list, get, create, delete]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [list, create, delete]
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
