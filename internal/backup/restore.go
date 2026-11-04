@@ -81,6 +81,9 @@ func (r *Restorer) Run(ctx context.Context) (snapshot string, err error) {
 	if err := r.removeLeftovers(ctx, name, listName, metaName); err != nil {
 		return "", fmt.Errorf("remove leftovers of an earlier restore: %w", err)
 	}
+	if err := r.removeStaleTokens(ctx); err != nil {
+		return "", fmt.Errorf("remove token copies of earlier restores: %w", err)
+	}
 
 	snapshot, err = r.resolveSnapshot(ctx, listName, &undo)
 	if err != nil {
@@ -198,6 +201,35 @@ func (r *Restorer) removeLeftovers(ctx context.Context, name, listName, metaName
 			}
 			return false, err
 		}))
+	}
+	return errors.Join(errs...)
+}
+
+// removeStaleTokens deletes token copies that killed restores left in any
+// namespace. A copy whose restore pod is still pending or running belongs to
+// a concurrent restore and stays.
+func (r *Restorer) removeStaleTokens(ctx context.Context) error {
+	core := r.kube.CoreV1()
+	sel := metav1.ListOptions{LabelSelector: managedSelector()}
+	secrets, err := core.Secrets(metav1.NamespaceAll).List(ctx, sel)
+	if err != nil {
+		return fmt.Errorf("list Secrets: %w", err)
+	}
+	var errs []error
+	for _, s := range secrets.Items {
+		if !strings.HasPrefix(s.Name, restoreNamePrefix) {
+			continue
+		}
+		pod, err := core.Pods(s.Namespace).Get(ctx, s.Name, metav1.GetOptions{})
+		switch {
+		case err == nil && (pod.Status.Phase == corev1.PodPending || pod.Status.Phase == corev1.PodRunning):
+			continue
+		case err != nil && !apierrors.IsNotFound(err):
+			errs = append(errs, err)
+			continue
+		}
+		r.log.Info("deleting token copy of an earlier restore", "secret", s.Namespace+"/"+s.Name)
+		errs = append(errs, ignoreNotFound(core.Secrets(s.Namespace).Delete(ctx, s.Name, metav1.DeleteOptions{})))
 	}
 	return errors.Join(errs...)
 }

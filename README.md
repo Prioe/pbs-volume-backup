@@ -31,7 +31,10 @@ deletes the PVC it created.
 The restore pod runs in the target namespace as root with the capabilities
 that restoring owners and modes needs. The namespace must allow Pod Security
 `baseline`. The tool copies the token Secret into the namespace for the
-restore and deletes the copy afterwards.
+restore and deletes the copy afterwards, also when the restore fails or you
+stop it. Only if the process is killed does the copy stay; the next restore
+deletes it, in any namespace. Until then, whoever can read Secrets in that
+namespace can read the token.
 
 ### Into a new PVC
 

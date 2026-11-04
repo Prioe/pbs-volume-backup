@@ -372,6 +372,30 @@ func TestRestoreRemovesLeftovers(t *testing.T) {
 	h.assertNoHelpers(t)
 }
 
+func TestRestoreRemovesStaleTokenCopies(t *testing.T) {
+	copyMeta := func(ns, name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Name: name, Namespace: ns, Labels: managedLabels()}
+	}
+	stale := &corev1.Secret{ObjectMeta: copyMeta("other", restoreNamePrefix+"other-x")}
+	busy := &corev1.Secret{ObjectMeta: copyMeta("busy", restoreNamePrefix+"busy-y")}
+	busyPod := &corev1.Pod{ObjectMeta: copyMeta("busy", busy.Name), Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	unrelated := &corev1.Secret{ObjectMeta: copyMeta("other", "pvb-something")}
+	h := newRestoreHarness(t, testRestoreConfig(), tokenSecret(), stale, busy, busyPod, unrelated)
+	if _, err := h.r.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	secrets := h.kube.CoreV1()
+	if _, err := secrets.Secrets("other").Get(t.Context(), stale.Name, metav1.GetOptions{}); err == nil {
+		t.Error("stale token copy kept")
+	}
+	if _, err := secrets.Secrets("busy").Get(t.Context(), busy.Name, metav1.GetOptions{}); err != nil {
+		t.Errorf("token copy of a running restore deleted: %v", err)
+	}
+	if _, err := secrets.Secrets("other").Get(t.Context(), unrelated.Name, metav1.GetOptions{}); err != nil {
+		t.Errorf("unrelated Secret deleted: %v", err)
+	}
+}
+
 func TestRestoreNoSnapshots(t *testing.T) {
 	h := newRestoreHarness(t, testRestoreConfig(), tokenSecret())
 	h.logsByPod = map[string]string{dnsName(restoreNamePrefix, appNS, targetPVC, "-list"): "[]\n"}

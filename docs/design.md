@@ -167,7 +167,10 @@ with the driver's ServiceAccount.
 
 1. Check the target. A new PVC must not exist yet; with `--into-existing`
    it must exist and no running pod may mount it.
-2. Delete pods and the Secret of an interrupted restore of the same target.
+2. Delete pods and the Secret of an interrupted restore of the same target,
+   and token copies of killed restores in all namespaces. A copy whose
+   restore pod is still pending or running belongs to a concurrent restore
+   and stays.
 3. Without `--snapshot`, run `snapshot list` in a pod in the tool's
    namespace and pin the latest snapshot, so `pvc.conf` and the volume come
    from the same one.
