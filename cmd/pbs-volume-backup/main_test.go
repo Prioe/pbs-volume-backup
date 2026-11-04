@@ -21,7 +21,8 @@ func TestRun(t *testing.T) {
 		{name: "unknown command", args: []string{"frobnicate"}, wantErr: errUsage},
 		{name: "version", args: []string{"version"}, wantOut: "dev\n"},
 		{name: "help", args: []string{"--help"}, wantOut: usage},
-		{name: "restore stub", args: []string{"restore"}, wantErrMsg: "restore: not implemented"},
+		{name: "restore without source", args: []string{"restore"}, wantErrMsg: "--from is required"},
+		{name: "restore without config", args: []string{"restore", "--from", "app/data", "--namespace", "pbs"}, wantErrMsg: "repository is required"},
 		{name: "backup without config", args: []string{"backup", "--namespace", "pbs"}, wantErrMsg: "repository is required"},
 	}
 	for _, tt := range tests {
@@ -66,6 +67,29 @@ func TestBackupFlags(t *testing.T) {
 	for k, v := range want {
 		if cfg.SnapshotClasses[k] != v {
 			t.Errorf("snapshot classes = %v", cfg.SnapshotClasses)
+		}
+	}
+}
+
+func TestRestoreFlags(t *testing.T) {
+	cfg, _, err := restoreFlags([]string{"--from", "app/data", "--snapshot", "2026-11-04T18:04:09Z", "--into-existing"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SourceNamespace != "app" || cfg.SourcePVC != "data" || cfg.TargetNamespace != "app" || cfg.TargetPVC != "data" ||
+		!cfg.IntoExisting || cfg.Snapshot != "2026-11-04T18:04:09Z" {
+		t.Errorf("cfg = %+v", cfg)
+	}
+	cfg, _, err = restoreFlags([]string{"--from", "app/data", "--to", "other/copy"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SourcePVC != "data" || cfg.TargetNamespace != "other" || cfg.TargetPVC != "copy" {
+		t.Errorf("cfg = %+v", cfg)
+	}
+	for _, bad := range []string{"data", "app/", "/data", "a/b/c"} {
+		if _, _, err := restoreFlags([]string{"--from", bad}, io.Discard); err == nil {
+			t.Errorf("--from %q accepted", bad)
 		}
 	}
 }

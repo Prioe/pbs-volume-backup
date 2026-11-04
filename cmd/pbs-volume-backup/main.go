@@ -19,7 +19,7 @@ const usage = `Usage: pbs-volume-backup <command> [flags]
 
 Commands:
   backup   back up all selected PVCs
-  restore  restore a PBS snapshot into a PVC
+  restore  restore a backup of a PVC into a PVC
   version  print the version
 
 Run "pbs-volume-backup <command> -h" for the flags of a command.
@@ -49,7 +49,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "backup":
 		return runBackup(ctx, args[1:], stdout, stderr)
 	case "restore":
-		return fmt.Errorf("%s: not implemented", args[0])
+		return runRestore(ctx, args[1:], stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintln(stdout, version)
 		return err

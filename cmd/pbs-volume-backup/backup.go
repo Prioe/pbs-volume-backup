@@ -20,19 +20,25 @@ import (
 
 var errFailed = errors.New("some volumes failed")
 
+// clientFlags registers the settings that backup and restore share. Each
+// flag defaults to the value of its environment variable.
+func clientFlags(fs *flag.FlagSet, c *backup.Client, namespaceHelp string) {
+	fs.StringVar(&c.Namespace, "namespace", os.Getenv("POD_NAMESPACE"), namespaceHelp+" (env POD_NAMESPACE)")
+	fs.StringVar(&c.Image, "image", os.Getenv("PVB_IMAGE"), "image of the client pods (env PVB_IMAGE)")
+	fs.StringVar(&c.Repository, "repository", os.Getenv("PBS_REPOSITORY"), "PBS repository, user@realm!token@host:datastore (env PBS_REPOSITORY)")
+	fs.StringVar(&c.Fingerprint, "fingerprint", os.Getenv("PBS_FINGERPRINT"), "SHA-256 fingerprint of the PBS certificate (env PBS_FINGERPRINT)")
+	fs.StringVar(&c.PBSNamespace, "pbs-namespace", os.Getenv("PBS_NAMESPACE"), "PBS namespace of all backup groups (env PBS_NAMESPACE)")
+	fs.StringVar(&c.TokenSecret, "token-secret", os.Getenv("PVB_TOKEN_SECRET"), "Secret in the tool's namespace with the PBS token (env PVB_TOKEN_SECRET)")
+	fs.StringVar(&c.TokenSecretKey, "token-secret-key", envOr("PVB_TOKEN_SECRET_KEY", "password"), "key of the token in the Secret (env PVB_TOKEN_SECRET_KEY)")
+}
+
 // backupFlags parses the backup flags. Each flag defaults to the value of
 // its environment variable.
 func backupFlags(args []string, stderr io.Writer) (backup.Config, bool, error) {
 	cfg := backup.Config{SnapshotClasses: map[string]string{}}
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&cfg.Namespace, "namespace", os.Getenv("POD_NAMESPACE"), "own namespace for clones and backup pods (env POD_NAMESPACE; default: from kubeconfig or service account)")
-	fs.StringVar(&cfg.Image, "image", os.Getenv("PVB_IMAGE"), "image of the backup pod (env PVB_IMAGE)")
-	fs.StringVar(&cfg.Repository, "repository", os.Getenv("PBS_REPOSITORY"), "PBS repository, user@realm!token@host:datastore (env PBS_REPOSITORY)")
-	fs.StringVar(&cfg.Fingerprint, "fingerprint", os.Getenv("PBS_FINGERPRINT"), "SHA-256 fingerprint of the PBS certificate (env PBS_FINGERPRINT)")
-	fs.StringVar(&cfg.PBSNamespace, "pbs-namespace", os.Getenv("PBS_NAMESPACE"), "PBS namespace for all backup groups (env PBS_NAMESPACE)")
-	fs.StringVar(&cfg.TokenSecret, "token-secret", os.Getenv("PVB_TOKEN_SECRET"), "Secret in the own namespace with the PBS token (env PVB_TOKEN_SECRET)")
-	fs.StringVar(&cfg.TokenSecretKey, "token-secret-key", envOr("PVB_TOKEN_SECRET_KEY", "password"), "key of the token in the Secret (env PVB_TOKEN_SECRET_KEY)")
+	clientFlags(fs, &cfg.Client, "own namespace for clones and backup pods; default: from kubeconfig or service account")
 	skip := fs.String("skip-label", envOr("PVB_SKIP_LABEL", "pbs-volume-backup/skip=true"), "PVCs with this label are skipped (env PVB_SKIP_LABEL)")
 	fs.Func("snapshot-class", "storage class to VolumeSnapshotClass mapping, storageclass=snapshotclass; repeatable, or comma-separated in env PVB_SNAPSHOT_CLASSES", func(s string) error {
 		return addMappings(cfg.SnapshotClasses, s)
@@ -66,13 +72,25 @@ func backupFlags(args []string, stderr io.Writer) (backup.Config, bool, error) {
 	return cfg, *verbose, nil
 }
 
+func kubeClientConfig() clientcmd.ClientConfig {
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		clientcmd.NewDefaultClientConfigLoadingRules(), &clientcmd.ConfigOverrides{})
+}
+
+func logger(stdout io.Writer, verbose bool) *slog.Logger {
+	level := slog.LevelInfo
+	if verbose {
+		level = slog.LevelDebug
+	}
+	return slog.New(slog.NewTextHandler(stdout, &slog.HandlerOptions{Level: level}))
+}
+
 func runBackup(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	cfg, verbose, err := backupFlags(args, stderr)
 	if err != nil {
 		return err
 	}
-	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		clientcmd.NewDefaultClientConfigLoadingRules(), &clientcmd.ConfigOverrides{})
+	clientConfig := kubeClientConfig()
 	if cfg.Namespace == "" {
 		if cfg.Namespace, _, err = clientConfig.Namespace(); err != nil {
 			return fmt.Errorf("own namespace: %w", err)
@@ -94,11 +112,7 @@ func runBackup(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 
-	level := slog.LevelInfo
-	if verbose {
-		level = slog.LevelDebug
-	}
-	log := slog.New(slog.NewTextHandler(stdout, &slog.HandlerOptions{Level: level}))
+	log := logger(stdout, verbose)
 	results, err := backup.NewDriver(kube, snap, cfg, log).Run(ctx)
 	if err != nil {
 		return err

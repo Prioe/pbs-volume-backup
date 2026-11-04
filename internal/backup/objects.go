@@ -12,12 +12,8 @@ import (
 )
 
 const (
-	dataPath   = "/data"
-	metaPath   = "/meta"
-	secretPath = "/secret"
-	pvcFile    = "pvc.yaml"
-	tokenFile  = "password"
-	clientPath = "/usr/bin/proxmox-backup-client"
+	metaPath = "/meta"
+	pvcFile  = "pvc.yaml"
 )
 
 func (d *Driver) meta(namespace, name string, t target) metav1.ObjectMeta {
@@ -119,64 +115,22 @@ func (d *Driver) backupPod(name string, t target) *corev1.Pod {
 		"--backup-id", backupID(t.pvc.Namespace, t.pvc.Name),
 		"--change-detection-mode", "metadata",
 	}
-	if d.cfg.PBSNamespace != "" {
-		args = append(args, "--ns", d.cfg.PBSNamespace)
-	}
-	return &corev1.Pod{
-		ObjectMeta: d.meta(d.cfg.Namespace, name, t),
-		Spec: corev1.PodSpec{
-			RestartPolicy:                 corev1.RestartPolicyNever,
-			ActiveDeadlineSeconds:         ptr.To(int64(d.cfg.BackupTimeout.Seconds())),
-			AutomountServiceAccountToken:  ptr.To(false),
-			EnableServiceLinks:            ptr.To(false),
-			TerminationGracePeriodSeconds: ptr.To(int64(10)),
-			SecurityContext: &corev1.PodSecurityContext{
-				RunAsUser:      ptr.To(int64(0)),
-				RunAsGroup:     ptr.To(int64(0)),
-				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-			},
-			Containers: []corev1.Container{{
-				Name:    "backup",
-				Image:   d.cfg.Image,
-				Command: []string{clientPath},
-				Args:    args,
-				Env: []corev1.EnvVar{
-					{Name: "PBS_REPOSITORY", Value: d.cfg.Repository},
-					{Name: "PBS_FINGERPRINT", Value: d.cfg.Fingerprint},
-					{Name: "PBS_PASSWORD_FILE", Value: secretPath + "/" + tokenFile},
-				},
-				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: ptr.To(false),
-					ReadOnlyRootFilesystem:   ptr.To(true),
-					Capabilities: &corev1.Capabilities{
-						Drop: []corev1.Capability{"ALL"},
-						Add:  []corev1.Capability{"DAC_OVERRIDE"},
-					},
-				},
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "data", MountPath: dataPath, ReadOnly: true},
-					{Name: "meta", MountPath: metaPath, ReadOnly: true},
-					{Name: "secret", MountPath: secretPath, ReadOnly: true},
-					{Name: "tmp", MountPath: "/tmp"},
-					{Name: "home", MountPath: "/root"},
-				},
+	return clientPod{
+		meta:     d.meta(d.cfg.Namespace, name, t),
+		args:     args,
+		caps:     []corev1.Capability{"DAC_OVERRIDE"},
+		deadline: d.cfg.BackupTimeout,
+		volumes: []corev1.Volume{
+			{Name: "data", VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: name, ReadOnly: true},
 			}},
-			Volumes: []corev1.Volume{
-				{Name: "data", VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: name, ReadOnly: true},
-				}},
-				{Name: "meta", VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
-				}},
-				{Name: "secret", VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: d.cfg.TokenSecret,
-						Items:      []corev1.KeyToPath{{Key: d.cfg.TokenSecretKey, Path: tokenFile}},
-					},
-				}},
-				{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-				{Name: "home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-			},
+			{Name: "meta", VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
+			}},
 		},
-	}
+		mounts: []corev1.VolumeMount{
+			{Name: "data", MountPath: dataPath, ReadOnly: true},
+			{Name: "meta", MountPath: metaPath, ReadOnly: true},
+		},
+	}.build(&d.cfg.Client, d.cfg.TokenSecret)
 }

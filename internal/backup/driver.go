@@ -1,13 +1,10 @@
 package backup
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"strings"
 	"time"
 
 	snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
@@ -49,11 +46,12 @@ type Driver struct {
 	cfg          Config
 	log          *slog.Logger
 	pollInterval time.Duration
+	logs         logReader
 }
 
 // NewDriver returns a driver for the given clients and config.
 func NewDriver(kube kubernetes.Interface, snap snapclient.Interface, cfg Config, log *slog.Logger) *Driver {
-	return &Driver{kube: kube, snap: snap, cfg: cfg, log: log, pollInterval: 2 * time.Second}
+	return &Driver{kube: kube, snap: snap, cfg: cfg, log: log, pollInterval: 2 * time.Second, logs: kubeLogs(kube)}
 }
 
 // Run removes leftovers of earlier runs, then backs up every selected PVC
@@ -215,7 +213,12 @@ func (d *Driver) backupOne(ctx context.Context, t target) (err error) {
 		return fmt.Errorf("create backup pod: %w", err)
 	}
 	undo.push(func(ctx context.Context) error { return d.deletePod(ctx, name) })
-	return d.waitPod(ctx, name)
+	logs, err := waitPod(ctx, d.kube, d.logs, d.cfg.Namespace, name, "backup pod", d.cfg.StartTimeout, d.cfg.BackupTimeout, d.pollInterval)
+	if err != nil {
+		return err
+	}
+	d.log.Debug("client output", "pvc", t.pvc.Namespace+"/"+t.pvc.Name, "log", logs)
+	return nil
 }
 
 // cleanupContext outlives the cancellation of ctx, so a SIGTERM during a
@@ -250,79 +253,6 @@ func (d *Driver) waitSnapshot(ctx context.Context, namespace, name string) (*sna
 	return vs, nil
 }
 
-func (d *Driver) waitPod(ctx context.Context, name string) error {
-	pods := d.kube.CoreV1().Pods(d.cfg.Namespace)
-	var pod *corev1.Pod
-	errNotStarted := errors.New("backup pod not started")
-	start := time.Now()
-	timeout := d.cfg.StartTimeout + d.cfg.BackupTimeout + time.Minute
-	err := wait.PollUntilContextTimeout(ctx, d.pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
-		var err error
-		pod, err = pods.Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		if pod.Status.Phase == corev1.PodPending && time.Since(start) > d.cfg.StartTimeout {
-			return false, fmt.Errorf("%w within %s", errNotStarted, d.cfg.StartTimeout)
-		}
-		return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed, nil
-	})
-	if err != nil {
-		if pod != nil {
-			return fmt.Errorf("backup pod did not finish: %w (%s)", err, podState(pod))
-		}
-		return fmt.Errorf("backup pod did not finish: %w", err)
-	}
-	logs := d.podLogs(ctx, name)
-	if pod.Status.Phase == corev1.PodFailed {
-		return fmt.Errorf("backup pod failed (%s): %s", podState(pod), lastLines(logs, 10))
-	}
-	d.log.Debug("client output", "pvc", pod.Annotations[sourceNamespaceAnnotation]+"/"+pod.Annotations[sourcePVCAnnotation], "log", logs)
-	return nil
-}
-
-func (d *Driver) podLogs(ctx context.Context, name string) string {
-	rc, err := d.kube.CoreV1().Pods(d.cfg.Namespace).GetLogs(name, &corev1.PodLogOptions{}).Stream(ctx)
-	if err != nil {
-		return "(logs unavailable: " + err.Error() + ")"
-	}
-	defer func() { _ = rc.Close() }()
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, io.LimitReader(rc, 1<<20)); err != nil {
-		return "(logs unavailable: " + err.Error() + ")"
-	}
-	return buf.String()
-}
-
-func podState(pod *corev1.Pod) string {
-	parts := []string{"phase " + string(pod.Status.Phase)}
-	if pod.Status.Reason != "" {
-		parts = append(parts, "reason "+pod.Status.Reason)
-	}
-	for _, c := range pod.Status.Conditions {
-		if c.Status == corev1.ConditionFalse && c.Reason != "" {
-			parts = append(parts, fmt.Sprintf("%s: %s %s", c.Type, c.Reason, c.Message))
-		}
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		switch {
-		case cs.State.Terminated != nil:
-			parts = append(parts, fmt.Sprintf("exit code %d", cs.State.Terminated.ExitCode))
-		case cs.State.Waiting != nil:
-			parts = append(parts, strings.TrimSpace("waiting: "+cs.State.Waiting.Reason+" "+cs.State.Waiting.Message))
-		}
-	}
-	return strings.Join(parts, ", ")
-}
-
-func lastLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
-}
-
 // cleanup is a stack of undo steps, run in reverse order.
 type cleanup []func(context.Context) error
 
@@ -337,7 +267,7 @@ func (c cleanup) run(ctx context.Context) error {
 }
 
 func (d *Driver) deletePod(ctx context.Context, name string) error {
-	return ignoreNotFound(d.kube.CoreV1().Pods(d.cfg.Namespace).Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: ptr.To(int64(0))}))
+	return deletePod(ctx, d.kube, d.cfg.Namespace, name)
 }
 
 func (d *Driver) deleteConfigMap(ctx context.Context, name string) error {
@@ -364,8 +294,12 @@ func (d *Driver) deleteClone(ctx context.Context, name string) error {
 }
 
 func (d *Driver) setReclaimDelete(ctx context.Context, pv string) error {
+	return setReclaimDelete(ctx, d.kube, pv)
+}
+
+func setReclaimDelete(ctx context.Context, kube kubernetes.Interface, pv string) error {
 	patch := []byte(`{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}`)
-	_, err := d.kube.CoreV1().PersistentVolumes().Patch(ctx, pv, types.MergePatchType, patch, metav1.PatchOptions{})
+	_, err := kube.CoreV1().PersistentVolumes().Patch(ctx, pv, types.MergePatchType, patch, metav1.PatchOptions{})
 	return ignoreNotFound(err)
 }
 

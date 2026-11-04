@@ -160,6 +160,30 @@ A PVC that can't be backed up (no CSI volume, a block volume, or no
 VolumeSnapshotClass for its driver) counts as failed, not skipped. The
 error names the opt-out label.
 
+### Restore
+
+`restore` runs on the operator's machine with the operator's kubeconfig, not
+with the driver's ServiceAccount.
+
+1. Check the target. A new PVC must not exist yet; with `--into-existing`
+   it must exist and no running pod may mount it.
+2. Delete pods and the Secret of an interrupted restore of the same target.
+3. Without `--snapshot`, run `snapshot list` in a pod in the tool's
+   namespace and pin the latest snapshot, so `pvc.conf` and the volume come
+   from the same one.
+4. Run `restore <snapshot> pvc.conf -` in a second pod there and read the
+   PVC from its log.
+5. Create the target PVC from it, unless it exists: storage class, size,
+   access modes and labels, with overrides from the flags.
+6. Copy the token Secret into the target namespace and start the restore
+   pod there. It mounts the PVC read-write and runs `restore <snapshot>
+   volume.pxar /data --allow-existing-dirs true` (a new ext4 volume already
+   has `lost+found`), plus `--overwrite true` for `--into-existing`. It runs
+   as root with `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `MKNOD` and
+   `SETFCAP`, all allowed under baseline.
+7. Delete the pods and the Secret copy. If the restore failed, also delete
+   a PVC that step 5 created, with its PV set to `Delete`.
+
 ### Spike results
 
 Measured on 2026-11-03 on the first user's cluster (Synology CSI, LUNs on
