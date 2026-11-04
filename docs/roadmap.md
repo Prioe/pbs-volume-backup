@@ -113,7 +113,9 @@ R8, R9.
   step.
 
 Done when: unit tests pass and a manual `backup` run against the homelab
-backs up one PVC end to end.
+backs up one PVC end to end. Done on 2026-11-04: a 20 GiB PVC with 960 MiB
+of data took 72 s, no objects were left behind, and the backup pod ran with a
+read-only root filesystem.
 
 ## M3: Client and options
 
