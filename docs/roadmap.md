@@ -149,7 +149,9 @@ Closes R6.
   and restore into a new PVC.
 
 Done when: a homelab PVC restored into a new PVC has the same files as the
-source.
+source. Done on 2026-11-04: 960 MiB restored from the split archive in 23 s
+(1 min 44 s with the helper pods), owners, modes and a socket intact, no
+objects left behind.
 
 ## M5: Helm chart
 
