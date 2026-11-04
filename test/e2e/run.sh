@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end test: kind with the CSI hostpath driver and a PBS container.
 # Needs docker, kind, kubectl, helm, go and git. KEEP=1 keeps the cluster.
+# E2E_IMAGE_TAR names a single-platform image tar to test instead of building
+# one, and E2E_IMAGE the repository:tag inside it.
 # E2E_AFTER_CLUSTER names a script that runs right after the cluster exists,
 # with CLUSTER, WORK and KUBECONFIG set.
 set -euo pipefail
@@ -10,7 +12,7 @@ NODE_IMAGE=kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290
 PBS_IMAGE=ayufan/proxmox-backup-server:v4.2.0-1@sha256:01f685a010025233b649417a317cc175b27920cd64f0429abfdc46a0d8d2e88a
 SNAPSHOTTER_VERSION=v8.7.0
 HOSTPATH_VERSION=v1.19.0
-IMAGE=pbs-volume-backup:e2e
+IMAGE=${E2E_IMAGE:-pbs-volume-backup:e2e}
 PBS=pvb-e2e-pbs
 TOOL_NS=pbs-volume-backup
 PBS_NS=k8s
@@ -90,8 +92,14 @@ find . -type f | sort | xargs md5sum
 echo END
 '
 
-log "build image"
-docker build -q -t "$IMAGE" "$ROOT"
+IMAGE_TAR=${E2E_IMAGE_TAR:-$WORK/image.tar}
+if [[ -n ${E2E_IMAGE_TAR:-} ]]; then
+	docker load -i "$IMAGE_TAR"
+else
+	log "build image"
+	docker build -q -t "$IMAGE" "$ROOT"
+	docker save --platform linux/amd64 -o "$IMAGE_TAR" "$IMAGE"
+fi
 go build -o "$WORK/pvb" "$ROOT/cmd/pbs-volume-backup"
 
 git clone -q --depth 1 --branch "$HOSTPATH_VERSION" https://github.com/kubernetes-csi/csi-driver-host-path "$WORK/hostpath"
@@ -100,7 +108,7 @@ kubectl kustomize "$CONTROLLER_URL" >"$WORK/snapshot-controller.yaml"
 
 log "kind cluster"
 kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --kubeconfig "$KUBECONFIG" --wait 120s
-kind load docker-image "$IMAGE" --name "$CLUSTER"
+kind load image-archive "$IMAGE_TAR" --name "$CLUSTER"
 if [[ -n ${E2E_AFTER_CLUSTER:-} ]]; then
 	log "hook $E2E_AFTER_CLUSTER"
 	CLUSTER=$CLUSTER WORK=$WORK "$E2E_AFTER_CLUSTER"
@@ -233,7 +241,7 @@ kubectl label namespace "$TOOL_NS" pod-security.kubernetes.io/enforce=baseline
 printf '%s' "$CI_TOKEN" >"$WORK/token"
 kubectl -n "$TOOL_NS" create secret generic pbs-token --from-file=password="$WORK/token"
 helm install pvb "$ROOT/charts/pbs-volume-backup" -n "$TOOL_NS" --wait \
-	--set image.repository="${IMAGE%:*}" --set image.tag="${IMAGE#*:}" --set image.pullPolicy=Never \
+	--set image.repository="${IMAGE%:*}" --set image.tag="${IMAGE##*:}" --set image.pullPolicy=Never \
 	--set pbs.repository="ci@pbs!backup@$PBS_IP:e2e" --set pbs.fingerprint="$FINGERPRINT" \
 	--set pbs.namespace="$PBS_NS" --set pbs.tokenSecret.name=pbs-token \
 	--set schedule="0 0 1 1 *"

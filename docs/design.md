@@ -232,8 +232,12 @@ Btrfs) with the manifests in [spikes/](../spikes/README.md):
 
 - GoReleaser builds the binary and the image on a tag and pushes the image to
   `ghcr.io/prioe/pbs-volume-backup`.
-- Before that, CI pushes a development image on every push to `main`, after
-  the tests pass, tagged `main` and `sha-<commit>`.
+- Before that, CI builds the image once per commit as a single-platform tar
+  and hands it to the end-to-end test as an artifact; pull requests push
+  nothing. On `main`, after all tests pass, CI builds it again from the same
+  inputs and build cache and pushes it as `main` and `sha-<commit>`, with
+  BuildKit's provenance attestation. The pushed image is a rebuild, not the
+  tested tar.
 - The same workflow pushes the chart as an OCI artifact to
   `oci://ghcr.io/prioe/charts/pbs-volume-backup`, with chart version and
   `appVersion` equal to the tag.
